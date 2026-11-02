@@ -29,7 +29,7 @@ lacks, so M3-T3 carries a small migration of its own.
     - `tsconfig.base.json` defines strict TS settings and path aliases that both apps extend.
     - `.env.example` stays in sync with what the code reads (`DATABASE_URL`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `ALLOWED_EMAILS`, `TOKEN_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY`, `WEB_ORIGIN`, `PORT`) with placeholder values; no real secrets.
 
-- [ ] **M1-T2 — `packages/shared` package scaffold**
+- [x] **M1-T2 — `packages/shared` package scaffold** — done 2026-11-02
   - depends-on: M1-T1
   - files: `packages/shared/package.json`, `packages/shared/tsconfig.json`, `packages/shared/src/index.ts`
   - accept:
