@@ -48,21 +48,28 @@ lacks, so M3-T3 carries a small migration of its own.
     - `GET /api/health` returns `200` with a JSON body including status and uptime.
     - A supertest-style request against the exported app passes without a running server.
 
-- [ ] **M1-T4 — `apps/db` package: Prisma client setup and initial migration**
+- [x] **M1-T4 — `apps/db` package: Prisma client setup and initial migration** — done 2026-11-02
   - depends-on: M1-T3
   - files: `apps/db/package.json`, `apps/db/tsconfig.json`, `apps/db/prisma/schema.prisma`, `apps/db/prisma/migrations/`, `apps/db/src/index.ts`
+  - note: M1-T4 lands the `@mise/db` workspace dependency in
+    `apps/api/package.json`; the actual `import` from `apps/api` is deferred to
+    M2-T1, which adds the first route that queries the database.
   - accept:
     - `DailyPlan` and `PlanBlock` are commented out in `schema.prisma` with a `// restored in M6-T1` marker; the initial migration creates every other model and enum.
     - `npx prisma migrate dev` in `apps/db` applies cleanly against a fresh database; `npx prisma migrate deploy` is idempotent.
     - A single shared `PrismaClient` singleton is exported from the `apps/db` package and imported by `apps/api` as a workspace dependency (no client-per-request, no direct `@prisma/client` import from `apps/api`).
 
-- [ ] **M1-T5 — Vite + React + Tailwind app shell** (parallel-ok with M1-T4)
+- [x] **M1-T5 — Vite + React + Tailwind app shell** (parallel-ok with M1-T4) — done 2026-11-02
   - depends-on: M1-T2
-  - files: `apps/web/package.json`, `apps/web/vite.config.ts`, `apps/web/index.html`, `apps/web/src/main.tsx`, `apps/web/src/App.tsx`, `apps/web/src/index.css`, `apps/web/tailwind.config.ts`
+  - files: `apps/web/package.json`, `apps/web/vite.config.ts`, `apps/web/index.html`, `apps/web/src/main.tsx`, `apps/web/src/App.tsx`, `apps/web/src/index.css`, `apps/web/src/api/client.ts`
   - accept:
     - `npm run dev -w apps/web` serves the app; Tailwind utility classes take effect.
     - Vite dev server proxies `/api/*` to the local API port.
     - A shared `fetch` wrapper exists that sends credentials and surfaces non-2xx responses as typed errors.
+  - note: no `apps/web/tailwind.config.ts` — Tailwind v4 is config-free, wired
+    via the `@tailwindcss/vite` plugin plus `@import "tailwindcss";` in
+    `src/index.css`. The proxy target is env-driven via
+    `VITE_API_PROXY_TARGET`, defaulting to `http://localhost:3000` when unset.
 
 - [ ] **M1-T6 — Lint, format, and test tooling across workspaces**
   - depends-on: M1-T3, M1-T5
