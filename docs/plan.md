@@ -36,9 +36,13 @@ lacks, so M3-T3 carries a small migration of its own.
     - Package builds to typed output and exports a single barrel from `src/index.ts`.
     - Both `apps/api` and `apps/web` can import a sample exported type and typecheck cleanly.
 
-- [ ] **M1-T3 — Express app shell with exported app and health route**
+- [x] **M1-T3 — Express app shell with exported app and health route** — done 2026-11-02
   - depends-on: M1-T2
   - files: `apps/api/package.json`, `apps/api/src/app.ts`, `apps/api/src/server.ts`, `apps/api/src/routes/health.ts`
+  - note: `apps/api/src/routes/health.test.ts` landed here via the dev loop's
+    test-writer step; M1-T6 only adds root orchestration + vitest config for it.
+    Review carry-over for M2: `app.ts` still needs a JSON 404 fallthrough and a
+    central error handler (no owning task yet) before the first real route.
   - accept:
     - `app.ts` exports a configured Express app with no `listen` call; `server.ts` is the only place that listens, and it is not imported by the app module.
     - `GET /api/health` returns `200` with a JSON body including status and uptime.
