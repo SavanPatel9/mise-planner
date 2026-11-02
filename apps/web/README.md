@@ -1,4 +1,4 @@
 # apps/web
 
-Vite + React + Tailwind frontend. Scaffolded in milestone M1 (see
-`docs/plan.md`); nothing here yet by design.
+Vite + React + Tailwind frontend for Mise's day-planning UI; dev server proxies
+`/api/*` to the local Express API.
