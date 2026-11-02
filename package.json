@@ -1,0 +1,8 @@
+{
+  "name": "mise-planner",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

@@ -1,0 +1,167 @@
+// Mise data model — see docs/spec.md for the narrative version.
+// Conventions: userId on every user-owned table; createdAt/updatedAt everywhere;
+// every FK indexed; onDelete explicit. The express-session store table is
+// created by connect-pg-simple and intentionally NOT modeled here.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  name         String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  tasks        Task[]
+  sessions     Session[]
+  integrations Integration[]
+  dailyPlans   DailyPlan[]
+}
+
+model Task {
+  id           String           @id @default(cuid())
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  project      String?
+  estimateMin  Int?
+  priority     Int              @default(2)
+  dueAt        DateTime?
+  status       TaskStatus       @default(TODO)
+  source       TaskSource       @default(DUMP)
+  deferCount   Int              @default(0) // times rolled to the next day
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  sessionTasks SessionTask[]
+  segments     SessionSegment[]
+  planBlocks   PlanBlock[]
+
+  @@index([userId, status]) // task list: "my tasks by status"
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  DROPPED
+}
+
+enum TaskSource {
+  DUMP
+  GITHUB
+  GMAIL
+  OUTLOOK
+  MANUAL
+}
+
+model Session {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plannedMin Int
+  startedAt  DateTime
+  endedAt    DateTime?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  tasks      SessionTask[]
+  segments   SessionSegment[]
+
+  @@index([userId, startedAt]) // end-of-day summary: a user's sessions for a date
+}
+
+// Which tasks were in a session, how each ended, and where I left off
+model SessionTask {
+  sessionId String
+  taskId    String
+  session   Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  task      Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  outcome   TaskOutcome?
+  note      String? // "where I left off", shown next session
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@id([sessionId, taskId])
+  @@index([taskId])
+}
+
+enum TaskOutcome {
+  DONE
+  PARTIAL
+  NOT_STARTED
+}
+
+// Time actually spent on each task within a session
+model SessionSegment {
+  id        String    @id @default(cuid())
+  sessionId String
+  taskId    String
+  session   Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  startedAt DateTime
+  endedAt   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([sessionId])
+  @@index([taskId])
+}
+
+// One plan per user per local day
+model DailyPlan {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime    @db.Date
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  blocks    PlanBlock[]
+
+  @@unique([userId, date])
+}
+
+// An ordered, time-boxed slot for a task within a day's plan
+model PlanBlock {
+  id             String    @id @default(cuid())
+  planId         String
+  plan           DailyPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  taskId         String
+  task           Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  sortOrder      Int
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([planId])
+  @@index([taskId])
+}
+
+// One row per connected account; several per provider allowed
+model Integration {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        Provider
+  accountEmail    String // which account, e.g. personal vs school
+  label           String? // display name, e.g. "School"
+  accessTokenEnc  String
+  refreshTokenEnc String?
+  scopes          String
+  lastSyncedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, provider, accountEmail])
+}
+
+enum Provider {
+  GOOGLE
+  GITHUB
+  MICROSOFT
+}
