@@ -5,7 +5,7 @@
 
 ## Overview
 
-**Mise** (from *mise en place*) — "Everything in its place before your day begins."
+**Mise** (from _mise en place_) — "Everything in its place before your day begins."
 
 A personal task manager that turns a messy morning brain-dump into a realistic,
 time-blocked day, then helps work through it with multi-task Pomodoro sessions.
@@ -235,15 +235,15 @@ enum Provider { GOOGLE GITHUB MICROSOFT }
 
 ## Stack
 
-| Layer | Choice |
-| --- | --- |
-| Language | TypeScript end-to-end |
-| Frontend | React + Vite + Tailwind CSS (`apps/web`) |
-| API | Express + Node (`apps/api`), exported app wrapped for Vercel Functions |
-| Database | Postgres (Neon) + Prisma (`apps/db`: schema, migrations, client singleton) |
-| LLM parsing | Claude API with tool use / structured output |
-| Auth | Google OAuth via Passport, Postgres-backed cookie sessions |
-| Shared types | `packages/shared` (API contracts, parsed-task shape) |
+| Layer        | Choice                                                                     |
+| ------------ | -------------------------------------------------------------------------- |
+| Language     | TypeScript end-to-end                                                      |
+| Frontend     | React + Vite + Tailwind CSS (`apps/web`)                                   |
+| API          | Express + Node (`apps/api`), exported app wrapped for Vercel Functions     |
+| Database     | Postgres (Neon) + Prisma (`apps/db`: schema, migrations, client singleton) |
+| LLM parsing  | Claude API with tool use / structured output                               |
+| Auth         | Google OAuth via Passport, Postgres-backed cookie sessions                 |
+| Shared types | `packages/shared` (API contracts, parsed-task shape)                       |
 
 ## Hosting
 
@@ -255,7 +255,7 @@ enum Provider { GOOGLE GITHUB MICROSOFT }
 
 ## Decisions
 
-- **Name:** Mise (*mise en place*). Repo `mise-planner` (`mise` collides with the dev tool).
+- **Name:** Mise (_mise en place_). Repo `mise-planner` (`mise` collides with the dev tool).
 - **Hook:** "Everything in its place before your day begins."
 - **TypeScript** end-to-end (decided 2026-11-02).
 - **Layout:** npm workspaces — `apps/web`, `apps/api`, `apps/db` (Prisma lives

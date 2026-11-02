@@ -76,15 +76,15 @@ Sign in with Google: one login covers identity and the Calendar/Gmail consent. A
 
 ## Tech stack
 
-| Layer | Choice |
-| --- | --- |
-| Frontend | React + Tailwind CSS |
-| API | Express + Node |
-| Database | Postgres + Prisma |
-| LLM parsing | Claude API with tool use / structured output |
-| Auth | Google OAuth via Passport, Postgres-backed sessions |
+| Layer        | Choice                                                                                                         |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| Frontend     | React + Tailwind CSS                                                                                           |
+| API          | Express + Node                                                                                                 |
+| Database     | Postgres + Prisma                                                                                              |
+| LLM parsing  | Claude API with tool use / structured output                                                                   |
+| Auth         | Google OAuth via Passport, Postgres-backed sessions                                                            |
 | Integrations | MVP: Google Calendar (OAuth). v2: Gmail (multi-account), GitHub (OAuth app), Microsoft 365 via Microsoft Graph |
-| Hosting | Vercel Hobby (frontend + Express as functions), Neon free Postgres |
+| Hosting      | Vercel Hobby (frontend + Express as functions), Neon free Postgres                                             |
 
 ## Data model
 
@@ -203,7 +203,7 @@ The MVP is the full daily loop (capture, plan, work, review) and nothing more. v
 
 ### Decisions
 
-- **Name:** Mise, from *mise en place*, the chef's habit of getting everything in its place before cooking starts. Repo: `mise-planner`, since `mise` alone collides with the dev tool.
+- **Name:** Mise, from _mise en place_, the chef's habit of getting everything in its place before cooking starts. Repo: `mise-planner`, since `mise` alone collides with the dev tool.
 - **Hook:** "Everything in its place before your day begins." Dump what's on your mind, Mise preps the day, and you just cook.
 - **Hosting:** free — Vercel Hobby for the React frontend and the Express API (as Vercel Functions), Neon free Postgres
 - **Platform:** web only for now

@@ -1,0 +1,9 @@
+dist/
+node_modules/
+coverage/
+package-lock.json
+
+# Prisma: client is generated into node_modules/.prisma; migrations are
+# generated SQL and must stay byte-for-byte as Prisma wrote them.
+apps/db/prisma/generated/
+apps/db/prisma/migrations/

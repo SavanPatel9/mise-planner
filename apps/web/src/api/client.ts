@@ -49,9 +49,16 @@ async function parseErrorBody(res: Response): Promise<ApiError> {
  * session auth and throws `ApiRequestError` on non-2xx responses.
  * Resolves to `undefined` for a 204 or otherwise empty response body.
  */
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (init?.body !== undefined && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+  if (
+    init?.body !== undefined &&
+    !(init.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
     headers.set("Content-Type", "application/json");
   }
 

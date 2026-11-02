@@ -71,9 +71,13 @@ lacks, so M3-T3 carries a small migration of its own.
     `src/index.css`. The proxy target is env-driven via
     `VITE_API_PROXY_TARGET`, defaulting to `http://localhost:3000` when unset.
 
-- [ ] **M1-T6 — Lint, format, and test tooling across workspaces**
+- [x] **M1-T6 — Lint, format, and test tooling across workspaces** — done 2026-11-02
   - depends-on: M1-T3, M1-T5
-  - files: `eslint.config.js`, `.prettierrc`, `vitest.config.ts` (per app), `apps/api/src/routes/health.test.ts`
+  - files: `eslint.config.mjs`, `.prettierrc`, `.prettierignore`, `apps/api/vitest.config.ts`, `apps/web/vitest.config.ts`, `apps/web/src/App.test.tsx`, `apps/api/src/routes/health.test.ts`
+  - note: config file is `eslint.config.mjs`, not `.js` as planned — root
+    `package.json` stays CJS (no `"type": "module"`), so the flat config
+    needs the `.mjs` extension to load as ESM. Type-aware linting
+    (`parserOptions.project`) was deliberately deferred to a follow-up task.
   - accept:
     - `npm run lint` and `npm test` from the root run across all workspaces and exit `0`.
     - At least one real API test (health route, via the exported app) and one web component test run under Vitest.
@@ -92,6 +96,13 @@ lacks, so M3-T3 carries a small migration of its own.
   - accept:
     - `npm run dev` starts web and API together; the command table in `CLAUDE.md` lists the real commands with no remaining `(placeholder)` markers.
     - Every command listed in the table has been run and succeeds.
+
+- [ ] **M1-T9 — Type-aware ESLint rules (projectService)**
+  - depends-on: M1-T6
+  - files: `eslint.config.mjs`, `tsconfig.json` (or a root-level config tsconfig)
+  - accept:
+    - `tseslint.configs.recommendedTypeChecked` (or equivalent) is enabled via `languageOptions.parserOptions.projectService`, with a tsconfig story covering root-level config files (`eslint.config.mjs`, `vitest.config.ts`, etc.) that aren't part of an app's own `tsconfig.json`.
+    - `npm run lint` still exits `0`, or any findings it surfaces in existing code are fixed minimally and reported.
 
 ---
 

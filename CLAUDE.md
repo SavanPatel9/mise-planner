@@ -28,9 +28,9 @@ Run from the repo root unless noted. Placeholders until the tooling milestone
 lands — update this table as each becomes real.
 
 - Install: `npm install`
-- Dev (both apps): `npm run dev` *(placeholder — wired in M1)*
-- Test: `npm test` *(placeholder — wired in M1)*
-- Lint: `npm run lint` *(placeholder — wired in M1)*
+- Dev (both apps): `npm run dev` _(placeholder — wired in M1)_
+- Test: `npm test` _(placeholder — wired in M1)_
+- Lint: `npm run lint` _(placeholder — wired in M1)_
 - Migrate: `npx prisma migrate dev` in `apps/db` (deploy: `npx prisma migrate deploy`)
 
 ## Conventions
