@@ -24,14 +24,25 @@ docs/mise-spec-export.md  original export, history only; spec.md supersedes it
 
 ## Commands
 
-Run from the repo root unless noted. Placeholders until the tooling milestone
-lands — update this table as each becomes real.
+Run from the repo root unless noted.
 
 - Install: `npm install`
-- Dev (both apps): `npm run dev` _(placeholder — wired in M1)_
-- Test: `npm test` _(placeholder — wired in M1)_
-- Lint: `npm run lint` _(placeholder — wired in M1)_
-- Migrate: `npx prisma migrate dev` in `apps/db` (deploy: `npx prisma migrate deploy`)
+- Dev (both apps): `npm run dev` — web on `5173` (Vite default) proxying `/api`
+  to the API on `3000`; `Ctrl-C` stops both
+- Test: `npm test`
+- Lint: `npm run lint` (fix: `npm run lint:fix`)
+- Format: `npm run format` (check only: `npm run format:check`)
+- Typecheck: `npm run typecheck`
+- Build: `npm run build`
+- Migrate: `npm run migrate:dev -w @mise/db` (deploy:
+  `npm run migrate:deploy -w @mise/db`)
+- Deploy: `npx vercel deploy` for a preview; production promotes via Vercel.
+  Previews skip migrations; production builds run `migrate deploy` last.
+
+Node `>=22` is required (`.nvmrc` holds the reference version, `22.22.2`). The
+repo does not set `engine-strict` — vitest and jsdom declare engines that
+exclude current non-LTS lines (23, 25), so strict mode would fail
+`npm install` on Node 25.
 
 ## Conventions
 

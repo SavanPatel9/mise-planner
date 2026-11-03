@@ -20,8 +20,9 @@ lacks, so M3-T3 carries a small migration of its own.
 - [x] **M1-T1 — Workspace wiring and root tooling config**
   - depends-on: —
   - files: `package.json`, `tsconfig.base.json`, `.gitignore`, `.env.example`, `.npmrc`
-  - done 2026-11-02 — `.npmrc` skipped (no `engines` yet; Node pin deferred to
-    M1-T7). Review notes: base config sets `noEmit`, so M1-T2/M1-T7 child
+  - done 2026-11-02 — Node pin deferred to M1-T7, which added `engines.node`;
+    the `.npmrc` decision was settled in M1-T8, see that task's note.
+    Review notes: base config sets `noEmit`, so M1-T2/M1-T7 child
     configs must set `"noEmit": false` to emit; M1-T5's web config must
     override both `module` and `moduleResolution` (and add DOM to `lib`).
   - accept:
@@ -96,9 +97,34 @@ lacks, so M3-T3 carries a small migration of its own.
     - `.vercelignore` added: `vercel deploy` uploads the working directory without applying `.gitignore` (observed: `apps/db/.env`, `dist/` in the first deployment's sources; that deployment was deleted).
     - Project `mise-planner` on Vercel; prod alias `mise-planner-dusky.vercel.app`. First deployment on a fresh project is forcibly Production (Vercel rule) — approved by Savan 2026-11-03.
 
-- [ ] **M1-T8 — Update CLAUDE.md command table and dev scripts**
+- [x] **M1-T8 — Update CLAUDE.md command table and dev scripts** — done 2026-11-03
   - depends-on: M1-T7
-  - files: `CLAUDE.md`, `package.json`
+  - files: `CLAUDE.md`, `package.json`, `package-lock.json`, `.nvmrc`
+  - note: root `dev` runs both servers via `concurrently -k` (prefixed,
+    color-coded; one `Ctrl-C` kills both). `engines.node` relaxed from `22.x`
+    to `>=22` — local Node is v25.2.1. `.nvmrc` added with `22.22.2` as the
+    reference version (the dependency tree's actual floor: jsdom requires
+    `^22.22.2`).
+  - deviations:
+    - `.npmrc` with `engine-strict=true` was planned but **not** created: it
+      gates the whole dependency tree, not just this package. Five installed
+      packages declare engines that exclude current non-LTS lines, 23/25 (`vitest`,
+      `jsdom`, `@asamuzakjp/css-color`, `@asamuzakjp/dom-selector`,
+      `w3c-xmlserializer` — all `^22.22.2 || ^24.15.0 || >=26.0.0`-shaped), so
+      strict mode fails `npm install` on Node 25 regardless of our own
+      `engines` value. Zero conflicts under Node 22.22.2 or 26. Decision:
+      Savan approved dropping `engine-strict` because vitest/jsdom engines
+      exclude Node 25; no open item remains.
+    - Verification substitutions: `npm run migrate:dev -w @mise/db` and
+      `npm run migrate:deploy -w @mise/db` were verified read-only, via
+      `npx prisma migrate status` against local `mise_dev` — the mutating
+      commands themselves were not run. `npx vercel deploy` was documented
+      in the command table but not run; Savan runs deploys himself.
+    - Relaxing `engines.node` to `>=22` changes the Node version Vercel
+      builds with: `engines` overrides the dashboard setting, so the next
+      build resolves to the newest matching major, not pinned `22.x`. The
+      next preview deploy (Savan's to run) should confirm `/api/health`
+      still works under whatever Node version that resolves to.
   - accept:
     - `npm run dev` starts web and API together; the command table in `CLAUDE.md` lists the real commands with no remaining `(placeholder)` markers.
     - Every command listed in the table has been run and succeeds.
