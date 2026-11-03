@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // The root package.json is CJS, but this entry (and the apps/api sources it
+    // pulls in) is ESM — bundler resolution lets TS read it as ESM regardless
+    // of the nearest package.json, matching how Vercel's esbuild builder
+    // bundles it.
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  },
+  "include": ["."]
+}

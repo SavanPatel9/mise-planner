@@ -82,13 +82,19 @@ lacks, so M3-T3 carries a small migration of its own.
     - `npm run lint` and `npm test` from the root run across all workspaces and exit `0`.
     - At least one real API test (health route, via the exported app) and one web component test run under Vitest.
 
-- [ ] **M1-T7 — Vercel + Neon deploy pipeline**
+- [x] **M1-T7 — Vercel + Neon deploy pipeline** — done 2026-11-03
   - depends-on: M1-T4, M1-T6
-  - files: `vercel.json`, `apps/api/api/index.ts`, `apps/api/package.json`
+  - files: `vercel.json`, `api/index.ts`, `api/package.json`, `api/tsconfig.json`, `.vercelignore`
   - accept:
     - The Vercel Function entry imports the exported Express app and wraps it; no duplicate app construction per request.
     - A deployed preview serves the web build at `/` and `GET /api/health` returns `200` against Neon.
     - Migrations run via `prisma migrate deploy` in the build step, not `db push`.
+    - `schema.prisma` gains `directUrl = env("DIRECT_URL")`: runtime uses the pooled Neon URL (`DATABASE_URL`), migrations use the direct one; both set in Vercel env and listed in `.env.example`.
+  - deviations:
+    - Function entry lives at repo-root `api/index.ts` (not `apps/api/api/index.ts`) — Vercel only discovers functions under `api/` at the project root, and the root must be the repo root for same-origin web+API. `api/` has its own `package.json` (`type: module`; Vercel's builder keeps ESM syntax and Node needs the nearest package.json to say so) and `tsconfig.json`.
+    - Migrations are gated to production builds: `vercel-build` runs compile-only `build` then `migrate:deploy` only when `VERCEL_ENV=production`, as the last step. Reviewer finding — previews share the prod `DATABASE_URL`, so an ungated migrate let any preview deploy mutate the prod schema. Preview builds log an explicit skip line.
+    - `.vercelignore` added: `vercel deploy` uploads the working directory without applying `.gitignore` (observed: `apps/db/.env`, `dist/` in the first deployment's sources; that deployment was deleted).
+    - Project `mise-planner` on Vercel; prod alias `mise-planner-dusky.vercel.app`. First deployment on a fresh project is forcibly Production (Vercel rule) — approved by Savan 2026-11-03.
 
 - [ ] **M1-T8 — Update CLAUDE.md command table and dev scripts**
   - depends-on: M1-T7

@@ -1,0 +1,6 @@
+{
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "apps/web/dist",
+  "framework": null,
+  "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index" }]
+}

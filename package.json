@@ -5,13 +5,18 @@
     "apps/*",
     "packages/*"
   ],
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
+    "build": "npm run build -w @mise/shared && npm run build -w @mise/db && npm run build -w @mise/web",
+    "vercel-build": "npm run build && if [ \"$VERCEL_ENV\" = \"production\" ]; then npm run migrate:deploy -w @mise/db; else echo \"Skipping migrate deploy (VERCEL_ENV=$VERCEL_ENV)\"; fi",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p api/tsconfig.json"
   },
   "overrides": {
     "eslint-plugin-jsx-a11y": {

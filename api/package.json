@@ -1,0 +1,5 @@
+{
+  "name": "@mise/vercel-entry",
+  "private": true,
+  "type": "module"
+}
