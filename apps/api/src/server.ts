@@ -1,4 +1,4 @@
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 
 function resolvePort(raw: string | undefined): number {
   if (raw === undefined) {
@@ -16,6 +16,7 @@ function resolvePort(raw: string | undefined): number {
 }
 
 const port = resolvePort(process.env.PORT);
+const app = createApp();
 
 app.listen(port, () => {
   console.log(`[api] listening on port ${port}`);
