@@ -43,7 +43,8 @@ lacks, so M3-T3 carries a small migration of its own.
   - note: `apps/api/src/routes/health.test.ts` landed here via the dev loop's
     test-writer step; M1-T6 only adds root orchestration + vitest config for it.
     Review carry-over for M2: `app.ts` still needs a JSON 404 fallthrough and a
-    central error handler (no owning task yet) before the first real route.
+    central error handler (owned by M2-T2, per approval 2026-11-03) before the
+    first real route.
   - accept:
     - `app.ts` exports a configured Express app with no `listen` call; `server.ts` is the only place that listens, and it is not imported by the app module.
     - `GET /api/health` returns `200` with a JSON body including status and uptime.
@@ -148,13 +149,20 @@ lacks, so M3-T3 carries a small migration of its own.
     - Ciphertext carries a random IV and auth tag; tampering with any stored component makes `decrypt` throw rather than return plaintext.
     - Round-trip, tamper-detection, and wrong-key tests pass; no plaintext or key material appears in any log or error message.
 
-- [ ] **M2-T2 — Postgres-backed session middleware [review: line-by-line]**
+- [x] **M2-T2 — Postgres-backed session middleware + app hardening [review: line-by-line]** — done 2026-11-03 (on branch `m2-t2`, awaiting human line-by-line review + merge)
   - depends-on: M1-T4
-  - files: `apps/api/src/auth/session.ts`, `apps/api/src/app.ts`
+  - files: `apps/api/src/auth/session.ts`, `apps/api/src/middleware/notFound.ts`, `apps/api/src/middleware/errorHandler.ts`, `apps/api/src/app.ts`
+  - note: session table is `user_sessions` (library-created; deliberately absent
+    from `schema.prisma`, so the next `migrate dev` reports drift — answer no to
+    any reset offer). `app.ts` became a `createApp({ sessionStore? })` factory
+    (plus `src/errors.ts`, approved scope extension) so tests inject a store and
+    need no database. `SESSION_SECRET` must be set in Vercel env before the next
+    production deploy — the API now fails fast at module load without it.
   - accept:
     - `express-session` + `connect-pg-simple` configured; the session table is created by the library and is absent from `schema.prisma`.
     - Cookie is `httpOnly`, `sameSite=lax`, `secure` in production, with an explicit `maxAge`; `trust proxy` set so cookies work behind Vercel.
     - `SESSION_SECRET` is required at startup; a test confirms a `Set-Cookie` with the expected flags.
+    - (M1-T3 carry-over, approved 2026-11-03) `app.ts` gains a JSON 404 fallthrough after the routers and a central 4-arg error handler registered last, returning the shared `ApiError` envelope; unexpected errors collapse to a generic 500 with no internals leaked. Tests cover both.
 
 - [ ] **M2-T3 — Passport Google strategy with email allowlist [review: line-by-line]**
   - depends-on: M2-T1, M2-T2
