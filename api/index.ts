@@ -2,6 +2,6 @@
 // module scope (apps/api/src/app.ts) and reused across invocations; Vercel
 // rewrites every /api/* path here, so the app still sees the original path and
 // its "/api"-mounted routers match.
-import { app } from "../apps/api/src/app.js";
+import { createApp } from "../apps/api/src/app.js";
 
-export default app;
+export default createApp();
