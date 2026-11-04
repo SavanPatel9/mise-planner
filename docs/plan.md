@@ -140,9 +140,26 @@ lacks, so M3-T3 carries a small migration of its own.
 
 ## M2 — Auth (Google OAuth, sessions, token encryption)
 
-- [ ] **M2-T1 — AES-GCM token encryption module [review: line-by-line]**
+- [x] **M2-T1 — AES-GCM token encryption module [review: line-by-line]** — done 2026-11-03
   - depends-on: M1-T4
-  - files: `apps/api/src/crypto/tokenCrypto.ts`, `apps/api/src/crypto/tokenCrypto.test.ts`
+  - files: `apps/api/src/crypto/tokenCrypto.ts`, `apps/api/src/crypto/tokenCrypto.test.ts`, `apps/api/package.json`
+  - note: stored format is bare `iv.ciphertext.authTag` (three base64 parts, no
+    version prefix — Savan's call); `decrypt` throws a fixed
+    `token decryption failed` with no `cause` and no input echoed. `encrypt`
+    instead throws a fixed, non-opaque message naming the argument requirement
+    (a bad call there is a bug, not an untrusted value) and echoes nothing.
+  - note: security review (Savan-approved) made the API
+    `encrypt(plaintext, context)` / `decrypt(stored, context)` — the required
+    non-empty `context` (callers pass `${userId}:${fieldName}`) is the GCM AAD,
+    so a ciphertext only opens under the context it was written for; the module
+    also deletes `TOKEN_ENCRYPTION_KEY` from `process.env` after loading it.
+  - deviations:
+    - `apps/api` `dev` script gained `--env-file-if-exists=../../.env` (not in the
+      task's file list) so the module's `TOKEN_ENCRYPTION_KEY` check has a local
+      env to read; `tsx watch` forwards the flag, so no `node --import tsx` fallback.
+    - Verification substitution: the guard-secrets hook blocks agents from writing
+      any `.env`, so env loading was proven with a non-secret file at the worktree
+      root plus Node's own `../../.env not found. Continuing without it.` line.
   - accept:
     - Single module exporting `encrypt`/`decrypt`; key read from `TOKEN_ENCRYPTION_KEY` and validated at startup (fail fast on missing/short key).
     - Ciphertext carries a random IV and auth tag; tampering with any stored component makes `decrypt` throw rather than return plaintext.
