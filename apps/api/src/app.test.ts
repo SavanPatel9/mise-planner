@@ -16,6 +16,14 @@ function buildApp() {
 describe("createApp", () => {
   beforeEach(() => {
     vi.stubEnv("SESSION_SECRET", "test-session-secret");
+    // The factory also configures Passport, which requires the Google
+    // credentials up front. Values are placeholders; nothing here calls Google.
+    vi.stubEnv("GOOGLE_CLIENT_ID", "test-client-id");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "test-client-secret");
+    vi.stubEnv(
+      "GOOGLE_CALLBACK_URL",
+      "http://localhost:3000/api/auth/google/callback",
+    );
   });
 
   afterEach(() => {

@@ -8,5 +8,10 @@
     "module": "ESNext",
     "moduleResolution": "Bundler"
   },
+  // This program reaches the apps/api sources through `index.ts`'s imports, so
+  // a declaration file nothing imports — the `Express.User` augmentation —
+  // would be left out and `req.user` would lose its shape. Listed explicitly;
+  // apps/api's own tsconfig picks it up from `include: ["src"]`.
+  "files": ["../apps/api/src/types/express.d.ts"],
   "include": ["."]
 }

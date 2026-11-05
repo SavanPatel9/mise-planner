@@ -181,9 +181,35 @@ lacks, so M3-T3 carries a small migration of its own.
     - `SESSION_SECRET` is required at startup; a test confirms a `Set-Cookie` with the expected flags.
     - (M1-T3 carry-over, approved 2026-11-03) `app.ts` gains a JSON 404 fallthrough after the routers and a central 4-arg error handler registered last, returning the shared `ApiError` envelope; unexpected errors collapse to a generic 500 with no internals leaked. Tests cover both.
 
-- [ ] **M2-T3 — Passport Google strategy with email allowlist [review: line-by-line]**
+- [x] **M2-T3 — Passport Google strategy with email allowlist [review: line-by-line]** — done 2026-11-05 (on branch `m2-t3`, awaiting human line-by-line review + merge)
   - depends-on: M2-T1, M2-T2
   - files: `apps/api/src/auth/passport.ts`, `apps/api/src/auth/allowlist.ts`, `apps/api/src/auth/allowlist.test.ts`
+  - note: the verify core lives in `apps/api/src/auth/googleVerify.ts` (Prisma-free,
+    injectable deps) with `googleVerify.test.ts` + `passport.test.ts` beyond the
+    task's file list; `requireEnv` was hoisted to `src/env.ts` (shared with
+    `session.ts`); `types/express.d.ts` types `req.user` and is pinned into the
+    Vercel build program via `api/tsconfig.json` `files`. Security review added
+    `state: true` + `pkce: true` (callback CSRF-bound to the session) and the
+    profile email must be Google-verified (`email_unverified` rejects; conflicting
+    claims fail closed). Emails are normalized trim+lowercase before allowlist and
+    upsert. `/api/health` is mounted ahead of Passport so `deserializeUser` DB
+    failures can't 500 it. Root `test`/`typecheck` now build `@mise/db` first
+    (first API runtime import of it). `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/
+    `GOOGLE_CALLBACK_URL` must be set in Vercel env before the next production
+    deploy — `createApp()` fails fast without them; Prisma engine bundling on
+    Vercel is unverified until the first preview deploy. Identity stays keyed on
+    the (mutable) email per spec — storing Google `sub` is a possible hardening.
+  - deviations:
+    - `accessType: "offline"` / `prompt: "consent"` are ignored on the strategy
+      constructor (the library reads them at authenticate-time), so they are
+      exported as `GOOGLE_AUTH_PARAMS` — **M2-T4 must pass this object to
+      `passport.authenticate("google", …)` or no refresh token arrives**, which
+      moves that acceptance bullet's proof to T4.
+  - handoffs: M2-T4 — regenerate the session after state verification at login
+    (fixation), never serialize `req.user` raw into a response (it carries live
+    tokens), rejected sign-in arrives as `done(null, false, { message: reason })`
+    for the redirect flow. M2-T6 — Google returns granted scopes as full URLs, so
+    compare by URL, never string-equality with `GOOGLE_SCOPE_STRING`.
   - accept:
     - `passport-google-oauth20` configured with Calendar read scope plus `offline` access and consent prompt so a refresh token arrives.
     - Verify callback rejects any email not in `ALLOWED_EMAILS` (case-insensitive, trimmed) before any DB write; allowed emails upsert a `User`.

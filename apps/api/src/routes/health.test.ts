@@ -6,8 +6,15 @@ import { createApp } from "../app.js";
 
 describe("GET /api/health", () => {
   beforeEach(() => {
-    // The session middleware requires a signing secret at build time.
+    // The session middleware requires a signing secret at build time, and
+    // Passport the Google credentials. Placeholders; nothing calls Google.
     vi.stubEnv("SESSION_SECRET", "test-session-secret");
+    vi.stubEnv("GOOGLE_CLIENT_ID", "test-client-id");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "test-client-secret");
+    vi.stubEnv(
+      "GOOGLE_CALLBACK_URL",
+      "http://localhost:3000/api/auth/google/callback",
+    );
   });
 
   afterEach(() => {

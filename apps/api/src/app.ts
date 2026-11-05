@@ -1,6 +1,8 @@
 import express from "express";
 import type session from "express-session";
+import passport from "passport";
 
+import { configurePassport } from "./auth/passport.js";
 import { createSessionMiddleware } from "./auth/session.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { notFound } from "./middleware/notFound.js";
@@ -15,8 +17,8 @@ export interface CreateAppOptions {
  * Builds the Express app. A factory rather than a module-level singleton so
  * tests can inject a session store and avoid a database connection.
  *
- * Registration order is execution order: parsers → session → routers → the
- * path-less 404 → the error handler (last).
+ * Registration order is execution order: parsers → session → health →
+ * Passport → routers → the path-less 404 → the error handler (last).
  */
 export function createApp(options: CreateAppOptions = {}) {
   const app = express();
@@ -31,7 +33,18 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use(express.json());
   app.use(createSessionMiddleware({ store: options.sessionStore }));
 
+  // Ahead of Passport's session lookup: `passport.session()` queries the
+  // database in `deserializeUser`, which would 500 `/api/health` for any
+  // cookie-holder during the outage it reports on. (The session middleware
+  // above still does a store lookup for cookie-bearing requests, so health
+  // is not fully DB-independent — only the Passport path is removed.)
   app.use("/api", healthRouter);
+
+  // After the session: `passport.session()` reads the login state out of
+  // `req.session`, so it has nothing to work with before it exists.
+  configurePassport();
+  app.use(passport.initialize());
+  app.use(passport.session());
 
   app.use(notFound);
   app.use(errorHandler);

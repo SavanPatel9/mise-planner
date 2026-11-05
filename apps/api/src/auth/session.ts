@@ -3,6 +3,8 @@ import type { RequestHandler } from "express";
 import session from "express-session";
 import { Pool } from "pg";
 
+import { requireEnv } from "../env.js";
+
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface SessionMiddlewareOptions {
@@ -12,16 +14,6 @@ export interface SessionMiddlewareOptions {
    * options are deliberately not overridable.
    */
   store?: session.Store;
-}
-
-/** Reads a required env var without ever putting its value in the message. */
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (value === undefined || value.trim() === "") {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-
-  return value;
 }
 
 function createPostgresStore(): session.Store {

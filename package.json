@@ -16,8 +16,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p api/tsconfig.json"
+    "test": "npm run build -w @mise/db && npm run test --workspaces --if-present",
+    "typecheck": "npm run build -w @mise/db && npm run typecheck --workspaces --if-present && tsc -p api/tsconfig.json"
   },
   "overrides": {
     "eslint-plugin-jsx-a11y": {
