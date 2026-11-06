@@ -16,6 +16,22 @@ const CLIENT_ERROR_MESSAGES: Record<number, string> = {
 };
 
 /**
+ * Everything this module logs goes through here first. An error's message — and
+ * so its stack, which quotes it — can carry text the caller chose:
+ * passport-oauth2 builds its `AuthorizationError` out of the OAuth callback's
+ * `error_description` query parameter, for one. A raw newline in that text would
+ * start a fresh line in the platform's log stream, letting the caller forge log
+ * entries, so control characters are escaped rather than emitted. The cost is a
+ * single-line stack trace, which is the cheaper half of the trade.
+ */
+function logSafe(text: string): string {
+  return text.replace(
+    /\p{Cc}/gu,
+    (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/**
  * The 4xx status a non-`AppError` declares, if any. body-parser and friends tag
  * their errors with `status`/`statusCode` plus `expose: true` (http-errors sets
  * it for every 4xx). `expose` is required so that an upstream HTTP client's
@@ -61,7 +77,7 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, next) => {
       // worth a log line. Message only, no stack: a thrown-through driver or
       // HTTP-client message can name hosts and credentials, so it is logged but
       // never answered with. The client gets the reason phrase instead.
-      console.error("[api] app error:", err.message);
+      console.error("[api] app error:", logSafe(err.message));
 
       const body: ApiError = {
         error: STATUS_CODES[err.status] ?? "Internal Server Error",
@@ -99,7 +115,7 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, next) => {
   // OAuth tokens or email content, none of which may reach the logs.
   console.error(
     "[api] unhandled error:",
-    err instanceof Error ? (err.stack ?? err.message) : String(err),
+    logSafe(err instanceof Error ? (err.stack ?? err.message) : String(err)),
   );
 
   const body: ApiError = { error: "Internal Server Error" };

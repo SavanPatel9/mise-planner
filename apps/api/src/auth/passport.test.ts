@@ -510,9 +510,15 @@ describe("configurePassport", () => {
       });
 
       // A refusal, not an error: `false` plus a fixed token the callback route
-      // can redirect on — and never the address itself.
+      // can redirect on — and never the address itself. The branding matters:
+      // the callback route trusts `not_allowed` only from a `VerifyFailure`
+      // instance, so a refactor back to a plain object would silently break it.
+      // (Import after `loadConfigured` so the class comes from the same module
+      // copy `vi.resetModules()` produced — a static import would never match.)
+      const { VerifyFailure } = await import("./passport.js");
       expect(err).toBeNull();
       expect(user).toBe(false);
+      expect(info).toBeInstanceOf(VerifyFailure);
       expect(info).toEqual({ message: "not_allowed" });
       expect(JSON.stringify(info)).not.toContain(STRANGER_EMAIL);
       expect(db.upsert).not.toHaveBeenCalled();
@@ -526,8 +532,10 @@ describe("configurePassport", () => {
 
       const { err, user, info } = await runVerify(strategy, { profile });
 
+      const { VerifyFailure } = await import("./passport.js");
       expect(err).toBeNull();
       expect(user).toBe(false);
+      expect(info).toBeInstanceOf(VerifyFailure);
       expect(info).toEqual({ message: "no_email" });
       expect(db.upsert).not.toHaveBeenCalled();
     });
@@ -542,8 +550,10 @@ describe("configurePassport", () => {
         }),
       });
 
+      const { VerifyFailure } = await import("./passport.js");
       expect(err).toBeNull();
       expect(user).toBe(false);
+      expect(info).toBeInstanceOf(VerifyFailure);
       expect(info).toEqual({ message: "email_unverified" });
       expect(db.upsert).not.toHaveBeenCalled();
     });

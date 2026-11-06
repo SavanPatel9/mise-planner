@@ -215,17 +215,54 @@ lacks, so M3-T3 carries a small migration of its own.
     - Verify callback rejects any email not in `ALLOWED_EMAILS` (case-insensitive, trimmed) before any DB write; allowed emails upsert a `User`.
     - Serialize/deserialize store only the user id; tests cover allowed, disallowed, and empty-allowlist cases.
 
-- [ ] **M2-T4 — Auth routes: sign-in, callback, logout, me [review: line-by-line]**
+- [x] **M2-T4 — Auth routes: sign-in, callback, logout, me [review: line-by-line]**
   - depends-on: M2-T3
   - files: `apps/api/src/routes/auth.ts`, `apps/api/src/routes/auth.test.ts`
   - accept:
     - `GET /auth/google`, `GET /auth/google/callback`, `POST /auth/logout`, `GET /api/me` behave as expected; logout destroys the session row and clears the cookie.
     - Rejected (non-allowlisted) sign-in redirects to the web app with an error flag and creates no session.
     - No route logs tokens, profile payloads, or email addresses.
+  - note: router is a `createAuthRouter()` factory mounted at `/api` so
+    `requireEnv("WEB_ORIGIN")` fails fast at `createApp()` (non-http(s) values
+    also rejected — `WEB_ORIGIN` must be set in Vercel env before the next
+    production deploy). The callback uses a custom `authenticate` callback
+    (passport's `failureRedirect` discards the verify `info`, which the
+    `?authError=` flag needs); success calls `req.logIn`, which on
+    passport@0.7.0 regenerates the session by default (fixation covered,
+    `keepSessionInfo` unset). All refusal causes except the allowlist map to
+    `?authError=failed` (decided at gate 1); redirects derive only from
+    `WEB_ORIGIN`'s parsed origin. Refusal teardown is guarded by
+    `req.isAuthenticated()` — review found a forged-state callback link could
+    otherwise force-log-out a signed-in user (SameSite=Lax sends the cookie on
+    top-level GET). Security pass added: `errorHandler` escapes control chars
+    in `console.error` output (OAuth `error_description` could forge log
+    lines), and verify refusals are branded as a `VerifyFailure` class so a
+    provider-crafted `error_description=not_allowed` can never surface the
+    allowlist flag (provider text reaches the callback's `info` by reference).
+  - deviations (approved): `SESSION_COOKIE_NAME` + `clearSessionCookie` added
+    to `auth/session.ts` (also passed as `name:` so the constant can't drift);
+    files beyond the declared list — `app.ts` (mount + env stubs in two test
+    files), `middleware/errorHandler.ts` (logSafe), `auth/passport.ts`
+    (`VerifyFailure`, asserted at the construction site in `passport.test.ts`).
+  - open (gate-2 decision: handle in M2-T5): unauthenticated
+    `GET /api/auth/google` and the bare callback each persist a session row at
+    the 30-day TTL with no rate limit — a scripted loop could fill the Neon
+    free tier (security pass rated it medium); M2-T5 adds a short pre-auth TTL
+    and/or an IP rate limit on `/api/auth/*`.
+  - handoffs: M2-T5 — `/api/auth/*` and `/api/me`'s own 401 must stay outside
+    blanket auth gating; consider an `Origin` check on mutating POSTs once real
+    ones land (Lax won't protect sibling subdomains under a custom domain).
+    M2-T7 — don't render sign-in-failure copy for `?authError` when the user is
+    already signed in (a cross-site forced callback lands there with a flag);
+    provider `error` path (e.g. revoked consent mid-flow) currently 500s as
+    JSON rather than redirecting — acceptable single-user, revisit with T7 UX.
 
 - [ ] **M2-T5 — `requireAuth` middleware and userId scoping [review: line-by-line]**
   - depends-on: M2-T4
   - files: `apps/api/src/auth/requireAuth.ts`, `apps/api/src/app.ts`, `packages/shared/src/auth.ts`
+  - scope added at M2-T4 gate 2: mitigate unauthenticated session-row writes on
+    `/api/auth/*` (short pre-auth TTL and/or IP rate limit — see M2-T4 open
+    note). `/api/auth/*` and `/api/me`'s own 401 stay outside blanket gating.
   - accept:
     - All `/api/*` routes except `/api/health` require an authenticated session and return `401` otherwise.
     - The middleware attaches a typed `userId` to the request; downstream handlers have no way to read a userId from the client.

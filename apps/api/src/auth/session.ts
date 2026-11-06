@@ -1,11 +1,49 @@
 import connectPgSimple from "connect-pg-simple";
-import type { RequestHandler } from "express";
+import type { RequestHandler, Response } from "express";
 import session from "express-session";
 import { Pool } from "pg";
 
 import { requireEnv } from "../env.js";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * express-session's default, named explicitly so `clearSessionCookie` and the
+ * middleware cannot drift apart.
+ */
+export const SESSION_COOKIE_NAME = "connect.sid";
+
+/**
+ * Cookie attributes shared by the middleware and the clear. Of these, only
+ * `path` (with the domain, left implicit here) decides whether a browser
+ * matches the clearing `Set-Cookie` to the stored cookie — `httpOnly`,
+ * `sameSite` and `secure` are inert for deletion. One source anyway, so the
+ * `path` cannot drift and the two sites stay obviously consistent. Read per
+ * call rather than once at module load: `NODE_ENV` decides `secure`, and the
+ * session tests set it around each `createSessionMiddleware()`.
+ */
+function sessionCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    // No `proxy` option on the session: express-session then falls back to
+    // `req.secure`, which Express derives from `X-Forwarded-Proto` under the
+    // app's `trust proxy` setting. Vercel terminates TLS upstream, so that
+    // header is what makes a `secure` cookie reachable at all.
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  } satisfies session.CookieOptions;
+}
+
+/**
+ * Removes the session cookie from the client. Destroying the session row is a
+ * separate step and does not touch the cookie, which would otherwise be sent
+ * on every later request only to miss in the store.
+ */
+export function clearSessionCookie(res: Response): void {
+  // `clearCookie` drops `maxAge` itself and forces a past `expires`.
+  res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions());
+}
 
 export interface SessionMiddlewareOptions {
   /**
@@ -63,20 +101,11 @@ export function createSessionMiddleware(
 
   const handleSession = session({
     secret,
+    name: SESSION_COOKIE_NAME,
     store: options.store ?? createPostgresStore(),
     resave: false,
     saveUninitialized: false,
-    // No `proxy` option: express-session then falls back to `req.secure`, which
-    // Express derives from `X-Forwarded-Proto` under the app's `trust proxy`
-    // setting. Vercel terminates TLS upstream, so that header is what makes a
-    // `secure` cookie reachable at all.
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: THIRTY_DAYS_MS,
-      path: "/",
-    },
+    cookie: { ...sessionCookieOptions(), maxAge: THIRTY_DAYS_MS },
   });
 
   // With a `secure` cookie, express-session drops `Set-Cookie` for a non-HTTPS

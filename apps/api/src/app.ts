@@ -6,6 +6,7 @@ import { configurePassport } from "./auth/passport.js";
 import { createSessionMiddleware } from "./auth/session.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { notFound } from "./middleware/notFound.js";
+import { createAuthRouter } from "./routes/auth.js";
 import { healthRouter } from "./routes/health.js";
 
 export interface CreateAppOptions {
@@ -45,6 +46,10 @@ export function createApp(options: CreateAppOptions = {}) {
   configurePassport();
   app.use(passport.initialize());
   app.use(passport.session());
+
+  // After `passport.session()`: `/api/me` and logout read the login state it
+  // restores.
+  app.use("/api", createAuthRouter());
 
   app.use(notFound);
   app.use(errorHandler);

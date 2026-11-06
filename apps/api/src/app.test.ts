@@ -24,6 +24,8 @@ describe("createApp", () => {
       "GOOGLE_CALLBACK_URL",
       "http://localhost:3000/api/auth/google/callback",
     );
+    // The auth router parses this at build time to derive its redirects.
+    vi.stubEnv("WEB_ORIGIN", "http://localhost:5173");
   });
 
   afterEach(() => {

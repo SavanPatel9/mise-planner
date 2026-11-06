@@ -24,7 +24,27 @@ import {
   GOOGLE_SCOPES,
   verifyGoogleProfile,
   type UpsertUserInput,
+  type VerifyFailureReason,
 } from "./googleVerify.js";
+
+/**
+ * The `info` a refused sign-in carries into Passport's callback. A class rather
+ * than a plain object because the provider can forge the latter: on
+ * `?error=access_denied`, passport-oauth2 fails the request with
+ * `{ message: error_description }` (`lib/strategy.js`), which reaches the
+ * callback's `info` argument verbatim. A crafted link could then claim any
+ * reason it liked — `not_allowed` for an account the allowlist never saw. Only
+ * this module constructs one of these, so `instanceof` is what proves the
+ * reason came from the verify callback rather than from a query string.
+ */
+export class VerifyFailure {
+  /** `message` because that is the key Passport's own failure handling reads. */
+  readonly message: VerifyFailureReason;
+
+  constructor(reason: VerifyFailureReason) {
+    this.message = reason;
+  }
+}
 
 /**
  * Google wants these on the authorization request — `access_type=offline` plus
@@ -140,7 +160,7 @@ export function configurePassport(): void {
             if (!result.ok) {
               // A refused sign-in, not an error: the callback route redirects
               // on it (M2-T4). The reason is a fixed token, never an address.
-              done(null, false, { message: result.reason });
+              done(null, false, new VerifyFailure(result.reason));
               return;
             }
 
