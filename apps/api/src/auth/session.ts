@@ -5,7 +5,18 @@ import { Pool } from "pg";
 
 import { requireEnv } from "../env.js";
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+/** Lifetime of a session that has completed sign-in. */
+export const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Idle lifetime of a session that has not. Not a total lifetime: every request
+ * re-applies this `maxAge`, which slides the cookie's `expires` and the store
+ * row's with it, so a session being used stays alive. What it bounds is how long
+ * an abandoned one lingers — long enough for a Google round trip, short enough
+ * that a scripted loop through `/api/auth/google` cannot leave 30-day rows
+ * behind in the store. See `preAuthSessionTtl`.
+ */
+export const PRE_AUTH_SESSION_MAX_AGE_MS = 15 * 60 * 1000;
 
 /**
  * express-session's default, named explicitly so `clearSessionCookie` and the
@@ -105,7 +116,7 @@ export function createSessionMiddleware(
     store: options.store ?? createPostgresStore(),
     resave: false,
     saveUninitialized: false,
-    cookie: { ...sessionCookieOptions(), maxAge: THIRTY_DAYS_MS },
+    cookie: { ...sessionCookieOptions(), maxAge: SESSION_MAX_AGE_MS },
   });
 
   // With a `secure` cookie, express-session drops `Set-Cookie` for a non-HTTPS
@@ -130,3 +141,29 @@ export function createSessionMiddleware(
     handleSession(req, res, next);
   };
 }
+
+/**
+ * Caps the idle lifetime of a session that has not signed in. The cookie's
+ * `maxAge` is also what the store writes as the row's expiry (connect-pg-simple
+ * reads `cookie.expires`), so this is what keeps a scripted sign-in loop from
+ * leaving 30-day rows behind. It expires nothing that is still being used:
+ * assigning `maxAge` recomputes `expires` from now, so each request through here
+ * pushes the deadline out another 15 minutes. Mount on `/api/auth`, after
+ * Passport and above the auth router: the rows worth capping are the ones the
+ * OAuth leg writes for `state` and the PKCE verifier, and `req.isAuthenticated`
+ * only exists once `passport.initialize()` has run.
+ *
+ * Nothing has to undo it at sign-in. `req.logIn` regenerates the session, and
+ * regeneration has the store `generate` a fresh one — which rebuilds
+ * `req.session.cookie` from the options `createSessionMiddleware` passed, so
+ * `SESSION_MAX_AGE_MS` returns by itself. The login callback in `routes/auth.ts`
+ * sets it explicitly all the same, so the granted lifetime is stated where it is
+ * granted rather than inherited from a mechanism two modules away.
+ */
+export const preAuthSessionTtl: RequestHandler = (req, _res, next) => {
+  if (!req.isAuthenticated()) {
+    req.session.cookie.maxAge = PRE_AUTH_SESSION_MAX_AGE_MS;
+  }
+
+  next();
+};

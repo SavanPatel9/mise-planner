@@ -3,22 +3,14 @@
 // Nothing here logs — not the Google profile, not the `info` a refused sign-in
 // carries, not a token, not an address. The only thing a rejection puts on the
 // wire is a fixed `authError` token.
+import type { AuthErrorFlag, MeResponse } from "@mise/shared";
 import { Router, type RequestHandler } from "express";
 import passport from "passport";
 
 import { GOOGLE_AUTH_PARAMS, VerifyFailure } from "../auth/passport.js";
-import { clearSessionCookie } from "../auth/session.js";
+import { clearSessionCookie, SESSION_MAX_AGE_MS } from "../auth/session.js";
 import { requireEnv } from "../env.js";
 import { AppError } from "../errors.js";
-
-/**
- * Query flag the web app reads off the redirect. `not_allowed` is the one
- * rejection worth its own copy ("this account isn't on the allowlist"); every
- * other cause — no address on the profile, an unverified one, a failed
- * authorization — is `failed`, because telling an unknown caller which is
- * which only helps it enumerate.
- */
-type AuthErrorFlag = "not_allowed" | "failed";
 
 /**
  * The rejection reason, narrowed to the flags above and nothing else. Keyed on
@@ -130,6 +122,12 @@ export function createAuthRouter(): Router {
             return;
           }
 
+          // The regenerated session already carries this maxAge — its cookie is
+          // rebuilt from the session middleware's options, discarding the
+          // pre-auth cap `preAuthSessionTtl` applied — but the lifetime a
+          // sign-in grants is stated here rather than left to that mechanism.
+          req.session.cookie.maxAge = SESSION_MAX_AGE_MS;
+
           res.redirect(webAppUrl());
         });
       },
@@ -173,7 +171,8 @@ export function createAuthRouter(): Router {
     // Field by field, never a spread: `req.user` can carry the live Google
     // tokens on the request that completed sign-in.
     const { id, email, name } = req.user;
-    res.json({ id, email, name });
+    const body: MeResponse = { id, email, name };
+    res.json(body);
   });
 
   return router;

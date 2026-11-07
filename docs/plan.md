@@ -257,7 +257,7 @@ lacks, so M3-T3 carries a small migration of its own.
     provider `error` path (e.g. revoked consent mid-flow) currently 500s as
     JSON rather than redirecting — acceptable single-user, revisit with T7 UX.
 
-- [ ] **M2-T5 — `requireAuth` middleware and userId scoping [review: line-by-line]**
+- [x] **M2-T5 — `requireAuth` middleware and userId scoping [review: line-by-line]**
   - depends-on: M2-T4
   - files: `apps/api/src/auth/requireAuth.ts`, `apps/api/src/app.ts`, `packages/shared/src/auth.ts`
   - scope added at M2-T4 gate 2: mitigate unauthenticated session-row writes on
@@ -267,6 +267,40 @@ lacks, so M3-T3 carries a small migration of its own.
     - All `/api/*` routes except `/api/health` require an authenticated session and return `401` otherwise.
     - The middleware attaches a typed `userId` to the request; downstream handlers have no way to read a userId from the client.
     - Tests cover authed and unauthed access to a protected route.
+  - note: `requireAuth` mounts last on `/api` (commented default-closed
+    boundary — new routers added below it land gated); it fails closed on a
+    missing/empty `req.user.id` (review found `{ userId: undefined }` would
+    read as "no filter" to Prisma) and attaches `req.auth.userId` solely from
+    the session user, with `userIdOf(req)` as the throwing accessor. Both
+    gate-2 mitigation halves shipped: pre-auth sessions capped at 15 min
+    (gate-1 decision; bounds _idle_ lifetime — each request slides expiry via
+    `touch`), 30 days restored by `logIn`'s regeneration and set explicitly;
+    plus zero-dep in-memory fixed-window rate limiting — 20/10min on
+    `/api/auth/*` (incl. logout, gate-1 decision) and, added after the
+    security pass measured express-session's get+touch issuing unmetered
+    Postgres writes on _every_ cookie-bearing `/api` path, a general
+    600/10min limiter on `/api`. Keys: first `x-vercel-forwarded-for` value
+    (edge-set) → `req.ip` → `"unknown"`, truncated to 100 chars (`req.ip`
+    under `trust proxy 1` is the last XFF element verbatim — spoofable);
+    10k-key cap refuses new keys; `Retry-After` on both 429 paths; per-process
+    state documented as best-effort. Body parser sits below both limiters.
+  - deviations (approved): `preAuthSessionTtl` mounts below
+    `passport.session()`, not before `passport.initialize()` as planned —
+    `req.isAuthenticated` doesn't exist until initialize attaches it; the
+    limiter (the half that protects the store) kept its planned pre-session
+    position. `SESSION_MAX_AGE_MS` exported (was private); `userIdOf`
+    accessor instead of an `AuthenticatedRequest` type.
+  - open (non-blocking, deferred): end-to-end probe that a real gated router
+    sees `req.auth.userId` under live Passport — free once M3-T2 mounts the
+    first gated route; verify on a preview deploy that a client-sent
+    `x-vercel-forwarded-for` is stripped by the edge (the keying rests on
+    that platform guarantee); fixed window admits 2×max across a boundary.
+  - handoffs: M3 routers — mount below the `requireAuth` line in `app.ts` and
+    read `userId` only via `req.auth`/`userIdOf`; any feature polling faster
+    than ~1 req/s sustained trips the general 600/10min cap — raise it or
+    exempt the polling route first. M2-T7 — consume `MeResponse`/
+    `AuthErrorFlag` from `@mise/shared` (type-only exports; the package has
+    no build).
 
 - [ ] **M2-T6 — Integration row storage for Google tokens [review: line-by-line]**
   - depends-on: M2-T1, M2-T3

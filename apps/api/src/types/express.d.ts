@@ -18,5 +18,15 @@ declare global {
     interface User extends Omit<AuthenticatedUser, "google"> {
       google?: AuthenticatedUser["google"];
     }
+
+    /**
+     * Where `requireAuth` leaves the session's user id. Optional because the
+     * augmentation is global — every request carries the property, only a gated
+     * one has it set — so handlers read it through `userIdOf`, which drops the
+     * `undefined` rather than passing it to a query.
+     */
+    interface Request {
+      auth?: { userId: string };
+    }
   }
 }

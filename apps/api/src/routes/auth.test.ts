@@ -19,7 +19,11 @@ vi.mock("@mise/db", () => ({
 
 import { createApp } from "../app.js";
 import { configurePassport, VerifyFailure } from "../auth/passport.js";
-import { SESSION_COOKIE_NAME } from "../auth/session.js";
+import {
+  PRE_AUTH_SESSION_MAX_AGE_MS,
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE_MS,
+} from "../auth/session.js";
 
 // Fixtures only, and obviously fake. The token values are distinctive so a leak
 // into a response body, a session row, or the console is unambiguous.
@@ -198,6 +202,40 @@ function sessionCookie(response: { headers: Record<string, unknown> }): string {
 /** The `name=value` pair, ready to be sent straight back as a `Cookie` header. */
 function cookiePair(setCookie: string): string {
   return setCookie.split(";")[0] ?? "";
+}
+
+/**
+ * The cookie's absolute expiry, in ms. express-session serializes the session's
+ * `maxAge` as `Expires` and sends no `Max-Age`, so the date is what can be
+ * asserted.
+ */
+function cookieExpiresAt(setCookie: string): number {
+  const expires = setCookie
+    .split(";")
+    .slice(1)
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("Expires="));
+  expect(expires, "expected an Expires attribute").toBeDefined();
+
+  const expiresAt = Date.parse((expires as string).slice("Expires=".length));
+  expect(Number.isNaN(expiresAt)).toBe(false);
+
+  return expiresAt;
+}
+
+/**
+ * The expiry stored with the row, which is the value connect-pg-simple writes
+ * to the `expire` column — what actually decides how long a row lingers.
+ */
+function storedExpiryAt(store: session.MemoryStore, sid: string): number {
+  const raw = (store as unknown as MemoryStoreInternals).sessions[sid];
+  const parsed = JSON.parse(raw ?? "{}") as { cookie?: { expires?: string } };
+  expect(
+    parsed.cookie?.expires,
+    "expected a stored cookie expiry",
+  ).toBeDefined();
+
+  return Date.parse(parsed.cookie?.expires as string);
 }
 
 /** The session id inside a signed `connect.sid` cookie (`s:<sid>.<signature>`). */
@@ -389,6 +427,85 @@ describe("auth routes", () => {
 
       expect(me.status).toBe(401);
       expect(me.body).toEqual({ error: "Unauthorized" });
+    });
+  });
+
+  // Cookie dates have second resolution, so every bound here carries 2s of
+  // slack on each side.
+  describe("session lifetime", () => {
+    it("caps the session a sign-in start leaves behind at 15 minutes", async () => {
+      const store = new session.MemoryStore();
+      const before = Date.now();
+
+      const response = await request(buildApp(store)).get("/api/auth/google");
+
+      expect(response.status).toBe(302);
+      const setCookie = sessionCookie(response);
+      const expiresAt = cookieExpiresAt(setCookie);
+      expect(expiresAt).toBeGreaterThanOrEqual(
+        before + PRE_AUTH_SESSION_MAX_AGE_MS - 2000,
+      );
+      expect(expiresAt).toBeLessThanOrEqual(
+        Date.now() + PRE_AUTH_SESSION_MAX_AGE_MS + 2000,
+      );
+
+      // The row is the point: a scripted loop through this endpoint must not be
+      // able to fill the store with 30-day rows.
+      const sid = sidFromCookie(setCookie);
+      expect(storedExpiryAt(store, sid)).toBeLessThan(
+        before + SESSION_MAX_AGE_MS,
+      );
+    });
+
+    it("grants the full 30 days once sign-in completes", async () => {
+      const store = new session.MemoryStore();
+      const app = buildApp(store);
+      const preAuth = await startSignIn(app);
+      const before = Date.now();
+
+      useStubStrategy({ kind: "success" });
+      const response = await request(app)
+        .get("/api/auth/google/callback?code=fake-auth-code")
+        .set("Cookie", preAuth.cookie);
+
+      const setCookie = sessionCookie(response);
+      const expiresAt = cookieExpiresAt(setCookie);
+      // The pre-auth cap must not survive into the signed-in session.
+      expect(expiresAt).toBeGreaterThanOrEqual(
+        before + SESSION_MAX_AGE_MS - 2000,
+      );
+      expect(expiresAt).toBeLessThanOrEqual(
+        Date.now() + SESSION_MAX_AGE_MS + 2000,
+      );
+
+      const sid = sidFromCookie(setCookie);
+      expect(storedExpiryAt(store, sid)).toBeGreaterThanOrEqual(
+        before + SESSION_MAX_AGE_MS - 2000,
+      );
+    });
+
+    it("does not shorten a signed-in session when sign-in is restarted", async () => {
+      const store = new session.MemoryStore();
+      const app = buildApp(store);
+      const signedIn = await completeSignIn(app);
+
+      // A re-consent from an already signed-in browser passes through the same
+      // mount as the pre-auth leg; capping it there would quietly cut a good
+      // session down to 15 minutes.
+      useRealStrategy();
+      const before = Date.now();
+      const response = await request(app)
+        .get("/api/auth/google")
+        .set("Cookie", signedIn.cookie);
+
+      expect(response.status).toBe(302);
+      const expiresAt = cookieExpiresAt(sessionCookie(response));
+      expect(expiresAt).toBeGreaterThanOrEqual(
+        before + SESSION_MAX_AGE_MS - 2000,
+      );
+      expect(storedExpiryAt(store, signedIn.sid)).toBeGreaterThanOrEqual(
+        before + SESSION_MAX_AGE_MS - 2000,
+      );
     });
   });
 
@@ -869,6 +986,29 @@ describe("auth routes", () => {
       expect(response.text).not.toContain("timezone");
     });
 
+    it("reports the session's user whatever id the client names", async () => {
+      const store = new session.MemoryStore();
+      const app = buildApp(store);
+      const signedIn = await completeSignIn(app);
+
+      db.findUnique.mockClear();
+      const foreignId = "user-cuid-someone-else";
+      const response = await request(app)
+        .get(`/api/me?userId=${foreignId}&id=${foreignId}`)
+        .set("Cookie", signedIn.cookie)
+        .set("X-User-Id", foreignId);
+
+      // Only the session decides whose record is read: the id comes from
+      // `req.user`, which `deserializeUser` built from the session row.
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ id: USER_ID, email: EMAIL, name: NAME });
+      expect(response.text).not.toContain(foreignId);
+      expect(db.findUnique).toHaveBeenCalledTimes(1);
+      expect(db.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: USER_ID } }),
+      );
+    });
+
     it("answers 401 when the session's user no longer exists", async () => {
       const store = new session.MemoryStore();
       const app = buildApp(store);
@@ -927,13 +1067,33 @@ describe("auth routes", () => {
     });
 
     it("is not reachable over GET", async () => {
-      // A GET would let any page log the user out with an image tag.
+      // A GET would let any page log the user out with an image tag. There is
+      // no GET route, so the request falls past the auth router into
+      // `requireAuth` — the 401 is the gate, not the route, and either way
+      // nothing is logged out.
       const response = await request(buildApp(new session.MemoryStore())).get(
         "/api/auth/logout",
       );
 
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({ error: "Unauthorized" });
+    });
+
+    it("is not reachable over GET by a signed-in caller either", async () => {
+      const store = new session.MemoryStore();
+      const app = buildApp(store);
+      const signedIn = await completeSignIn(app);
+
+      // Past the gate the GET finds no route and 404s — the session survives,
+      // which is the property that matters for the image-tag attack.
+      const response = await request(app)
+        .get("/api/auth/logout")
+        .set("Cookie", signedIn.cookie);
+
       expect(response.status).toBe(404);
       expect(response.body).toEqual({ error: "Not Found" });
+      expectKeepsSessionCookie(response);
+      expect(authenticatedSids(store)).toEqual([signedIn.sid]);
     });
   });
 
