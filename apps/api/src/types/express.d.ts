@@ -8,16 +8,13 @@ declare global {
     /**
      * What `req.user` is — merged into Passport's empty placeholder interface.
      * Derived from `AuthenticatedUser` rather than restating its fields, so the
-     * two cannot drift.
-     *
-     * `google` holds live OAuth tokens and exists only on the request that
-     * completed sign-in: the session stores the user id alone, so a user
-     * restored by `deserializeUser` carries no tokens — hence optional here
-     * and required there.
+     * two cannot drift. Identity only: a sign-in's OAuth tokens go straight to
+     * the integration service, so no request ever carries one here.
      */
-    interface User extends Omit<AuthenticatedUser, "google"> {
-      google?: AuthenticatedUser["google"];
-    }
+    // The empty body is the point: an interface is required for declaration
+    // merging into Passport's `User`, and every field comes from the supertype.
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    interface User extends AuthenticatedUser {}
 
     /**
      * Where `requireAuth` leaves the session's user id. Optional because the

@@ -8,7 +8,8 @@
 // program reaches this module has to pull it in itself — `apps/api` by its
 // `include`, the Vercel entry by its `files`.
 //
-// Nothing here logs — not the profile, not the address, not a token.
+// The one thing this module logs is a failed token write, as the class name of
+// the error and nothing else — never the profile, the address, or a token.
 import { prisma } from "@mise/db";
 import passport from "passport";
 import {
@@ -19,10 +20,13 @@ import {
 } from "passport-google-oauth20";
 
 import { requireEnv } from "../env.js";
+import { logSafe } from "../middleware/errorHandler.js";
+import { upsertGoogleIntegration } from "../services/integrations.js";
 import { isAllowed } from "./allowlist.js";
 import {
   GOOGLE_SCOPES,
   verifyGoogleProfile,
+  type PersistGoogleTokensInput,
   type UpsertUserInput,
   type VerifyFailureReason,
 } from "./googleVerify.js";
@@ -90,6 +94,32 @@ function upsertUser({ email, name }: UpsertUserInput) {
   });
 }
 
+/**
+ * The token write, encrypted and keyed by the integration service. Verify
+ * supplies the already-normalized account email and the scopes Google actually
+ * granted — full scope URLs, passed through verbatim — so the row records this
+ * consent rather than the set that was requested.
+ */
+async function persistGoogleTokens(
+  input: PersistGoogleTokensInput,
+): Promise<void> {
+  try {
+    await upsertGoogleIntegration(input);
+  } catch (error) {
+    // Rethrown, so verify turns this into a refusal; the route then redirects
+    // with the generic `?authError=failed`, which makes this line the only
+    // trace that the write — rather than the account — was the problem. The
+    // error's class and nothing more: a Prisma or crypto message can quote a
+    // query or a value, and what failed here was a write of tokens keyed by an
+    // address.
+    console.error(
+      "[api] sign-in aborted, google token persistence failed:",
+      logSafe(error instanceof Error ? error.name : typeof error),
+    );
+    throw error;
+  }
+}
+
 /** Set once the session serializers are on the singleton; see `configurePassport`. */
 let serializersRegistered = false;
 
@@ -148,7 +178,7 @@ export function configurePassport(): void {
         void (async () => {
           try {
             const result = await verifyGoogleProfile(
-              { upsertUser, isAllowed },
+              { upsertUser, isAllowed, persistGoogleTokens },
               {
                 profile,
                 accessToken,

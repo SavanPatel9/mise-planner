@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Prisma is mocked at the module boundary so importing the wiring never loads a
@@ -7,10 +8,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   upsert: vi.fn(),
   findUnique: vi.fn(),
+  integrationUpsert: vi.fn(),
+  integrationFindUnique: vi.fn(),
 }));
 
 vi.mock("@mise/db", () => ({
-  prisma: { user: { upsert: db.upsert, findUnique: db.findUnique } },
+  prisma: {
+    user: { upsert: db.upsert, findUnique: db.findUnique },
+    // The integration row is written on the same request, through the real
+    // service and the real crypto — only the client is a double.
+    integration: {
+      upsert: db.integrationUpsert,
+      findUnique: db.integrationFindUnique,
+    },
+  },
 }));
 
 // Fixture values only, deliberately distinctive so a leak into an error message
@@ -31,6 +42,9 @@ const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 const REQUESTED_SCOPES = ["openid", "email", "profile", CALENDAR_SCOPE];
 /** A partial consent: Calendar declined, so the recorded grant is narrower. */
 const GRANTED_SCOPE = "openid email";
+
+/** Only has to be a valid key; see `loadPassport`. */
+const TOKEN_KEY = randomBytes(32).toString("base64");
 
 const GOOGLE_ENV_VARS = [
   "GOOGLE_CLIENT_ID",
@@ -115,6 +129,10 @@ async function loadPassport(): Promise<{
   passport: PassportInternals;
 }> {
   vi.resetModules();
+  // The wiring reaches `crypto/tokenCrypto.ts`, which reads this key at module
+  // load and then deletes it from the environment — so every reload needs it
+  // put back. The value is irrelevant here; nothing in this file encrypts.
+  vi.stubEnv("TOKEN_ENCRYPTION_KEY", TOKEN_KEY);
   const wiring = await import("./passport.js");
   const { default: passport } = await import("passport");
 
@@ -241,13 +259,53 @@ interface SessionUser {
   id: string;
   email: string;
   name: string | null;
-  google: { accessToken: string; refreshToken: string | null; scopes: string };
 }
 
 function asSessionUser(user: unknown): SessionUser {
   expect(user, "expected done to receive a user").toBeTruthy();
 
   return user as SessionUser;
+}
+
+/** The `Integration` statement the sign-in should have issued, as written. */
+interface IntegrationWrite {
+  where: {
+    userId_provider_accountEmail: {
+      userId: string;
+      provider: string;
+      accountEmail: string;
+    };
+  };
+  create: Record<string, unknown> & {
+    accessTokenEnc: string;
+    refreshTokenEnc: string | null;
+    scopes: string;
+  };
+  update: Record<string, unknown> & { accessTokenEnc: string; scopes: string };
+}
+
+function integrationWrite(index = 0): IntegrationWrite {
+  const args = db.integrationUpsert.mock.calls[index]?.[0];
+  expect(args, "expected an integration upsert").toBeTruthy();
+
+  return args as IntegrationWrite;
+}
+
+/**
+ * Boolean, not an assertion, so a failing leak check can never make vitest
+ * print a token or a stored ciphertext.
+ */
+function mentions(haystack: string, needle: string): boolean {
+  if (needle.length === 0) return false;
+  return haystack.includes(needle);
+}
+
+function isCiphertextOf(stored: unknown, plaintext: string): boolean {
+  return (
+    typeof stored === "string" &&
+    stored.split(".").length === 3 &&
+    !mentions(stored, plaintext)
+  );
 }
 
 function scopeList(scope: unknown): string[] {
@@ -274,8 +332,12 @@ describe("configurePassport", () => {
 
     db.upsert.mockReset();
     db.findUnique.mockReset();
+    db.integrationUpsert.mockReset();
+    db.integrationFindUnique.mockReset();
     db.upsert.mockResolvedValue({ id: USER_ID, email: EMAIL, name: NAME });
     db.findUnique.mockResolvedValue({ id: USER_ID, email: EMAIL, name: NAME });
+    db.integrationUpsert.mockResolvedValue({ id: "integration-cuid-2001" });
+    db.integrationFindUnique.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -415,12 +477,61 @@ describe("configurePassport", () => {
       expect(session.id).toBe(USER_ID);
       expect(session.email).toBe(EMAIL);
       expect(session.name).toBe(NAME);
-      // And `params` arrived as params: the granted scope string is recorded
-      // verbatim, narrower than the four scopes that were requested.
-      expect(session.google.scopes).toBe(GRANTED_SCOPE);
-      expect(scopeList(session.google.scopes)).not.toContain(CALENDAR_SCOPE);
-      expect(session.google.accessToken).toBe(ACCESS_TOKEN);
-      expect(session.google.refreshToken).toBe(REFRESH_TOKEN);
+      // And `params` arrived as params: the granted scope string reaches the
+      // integration row verbatim, narrower than the four requested scopes.
+      const write = integrationWrite();
+      expect(write.create.scopes).toBe(GRANTED_SCOPE);
+      expect(scopeList(write.create.scopes)).not.toContain(CALENDAR_SCOPE);
+      // The tokens went to the store and not onto the session user.
+      expect(isCiphertextOf(write.create.accessTokenEnc, ACCESS_TOKEN)).toBe(
+        true,
+      );
+      expect(isCiphertextOf(write.create.refreshTokenEnc, REFRESH_TOKEN)).toBe(
+        true,
+      );
+      expect(Object.keys(session).sort()).toEqual(["email", "id", "name"]);
+    });
+
+    it("stores the tokens encrypted, keyed on the signed-in user and account", async () => {
+      const { strategy } = await loadConfigured();
+      // The same module instance the wiring encrypted with — a static import
+      // would be a different copy with a different key after resetModules.
+      const { decrypt } = await import("../crypto/tokenCrypto.js");
+
+      const { err, user } = await runVerify(strategy);
+
+      expect(err).toBeNull();
+      expect(db.integrationUpsert).toHaveBeenCalledTimes(1);
+
+      const write = integrationWrite();
+      expect(write.where).toEqual({
+        userId_provider_accountEmail: {
+          userId: USER_ID,
+          provider: "GOOGLE",
+          accountEmail: EMAIL,
+        },
+      });
+      // Real crypto, real service: the columns open only under this user's
+      // per-column context.
+      expect(
+        decrypt(write.create.accessTokenEnc, `${USER_ID}:accessToken`),
+      ).toBe(ACCESS_TOKEN);
+      expect(
+        decrypt(
+          write.create.refreshTokenEnc as string,
+          `${USER_ID}:refreshToken`,
+        ),
+      ).toBe(REFRESH_TOKEN);
+
+      // Nothing in the statement is a plaintext token or the raw address.
+      const serialized = JSON.stringify(write);
+      for (const secret of [ACCESS_TOKEN, REFRESH_TOKEN, RAW_EMAIL]) {
+        expect(mentions(serialized, secret)).toBe(false);
+      }
+      // And the session user carries no credential at all.
+      expect(mentions(JSON.stringify(asSessionUser(user)), ACCESS_TOKEN)).toBe(
+        false,
+      );
     });
 
     it("upserts once on the normalized address and sends no token to the database", async () => {
@@ -465,10 +576,14 @@ describe("configurePassport", () => {
 
       for (const params of [{}, { scope: "   " }, { scope: 42 }]) {
         db.upsert.mockClear();
+        db.integrationUpsert.mockClear();
         const { err, user } = await runVerify(strategy, { params });
 
         expect(err).toBeNull();
-        const scopes = scopeList(asSessionUser(user).google.scopes);
+        asSessionUser(user);
+        // A blank or missing granted scope must not record an empty grant:
+        // the requested set is the fallback.
+        const scopes = scopeList(integrationWrite().create.scopes);
         expect(scopes).toEqual(expect.arrayContaining(REQUESTED_SCOPES));
       }
     });
@@ -476,11 +591,11 @@ describe("configurePassport", () => {
     it("trims a padded granted scope string", async () => {
       const { strategy } = await loadConfigured();
 
-      const { user } = await runVerify(strategy, {
+      await runVerify(strategy, {
         params: { scope: `  ${GRANTED_SCOPE}  ` },
       });
 
-      expect(asSessionUser(user).google.scopes).toBe(GRANTED_SCOPE);
+      expect(integrationWrite().create.scopes).toBe(GRANTED_SCOPE);
     });
 
     it("accepts a sign-in that returns no refresh token", async () => {
@@ -491,7 +606,14 @@ describe("configurePassport", () => {
       });
 
       expect(err).toBeNull();
-      expect(asSessionUser(user).google.refreshToken).toBeNull();
+      asSessionUser(user);
+
+      const write = integrationWrite();
+      // Google omits the refresh token on a repeat consent: the statement
+      // leaves the column out of its update rather than nulling the only copy
+      // of the grant.
+      expect("refreshTokenEnc" in write.update).toBe(false);
+      expect(write.create.refreshTokenEnc).toBeNull();
     });
 
     it("refuses a disallowed address with a typed reason and no database write", async () => {
@@ -522,6 +644,8 @@ describe("configurePassport", () => {
       expect(info).toEqual({ message: "not_allowed" });
       expect(JSON.stringify(info)).not.toContain(STRANGER_EMAIL);
       expect(db.upsert).not.toHaveBeenCalled();
+      // Nor a stored token: a stranger's sign-in leaves no row of either kind.
+      expect(db.integrationUpsert).not.toHaveBeenCalled();
     });
 
     it("refuses a profile with no usable email before any database write", async () => {
@@ -556,6 +680,47 @@ describe("configurePassport", () => {
       expect(info).toBeInstanceOf(VerifyFailure);
       expect(info).toEqual({ message: "email_unverified" });
       expect(db.upsert).not.toHaveBeenCalled();
+    });
+
+    it("refuses the sign-in when the token write fails", async () => {
+      const { strategy } = await loadConfigured();
+      const failure = new Error(
+        `insert into "Integration" failed for ${EMAIL}: ${ACCESS_TOKEN}`,
+      );
+      failure.name = "PrismaClientKnownRequestError";
+      db.integrationUpsert.mockRejectedValue(failure);
+      const errorSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => undefined);
+
+      const { err, user, info } = await runVerify(strategy);
+
+      // A session with no stored credentials could not reach Google again, so
+      // the write failing is a refusal rather than a signed-in user — and a
+      // branded one, like every other refusal the route redirects on.
+      const { VerifyFailure } = await import("./passport.js");
+      expect(err).toBeNull();
+      expect(user).toBe(false);
+      expect(info).toBeInstanceOf(VerifyFailure);
+      expect(info).toEqual({ message: "token_persist_failed" });
+      // The user row stays: it holds no credentials and the next sign-in
+      // repairs the integration.
+      expect(db.upsert).toHaveBeenCalledTimes(1);
+
+      // Exactly one diagnostic line, carrying the error's class and nothing
+      // else — a Prisma message can quote a query, a value, or an address.
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const line = (errorSpy.mock.calls[0] ?? []).map(String).join(" ");
+      expect(line).toContain("google token persistence failed");
+      expect(line).toContain("PrismaClientKnownRequestError");
+      for (const secret of [
+        ACCESS_TOKEN,
+        REFRESH_TOKEN,
+        EMAIL,
+        failure.message,
+      ]) {
+        expect(mentions(line, secret)).toBe(false);
+      }
     });
 
     it("reports a failing upsert as an error, not a refusal", async () => {
@@ -603,6 +768,14 @@ describe("configurePassport", () => {
           },
         }),
       });
+      // The one line this module is allowed to write is the failed token
+      // write; it must survive this sweep too.
+      const storeFailure = new Error(
+        `write failed for ${EMAIL}: ${REFRESH_TOKEN}`,
+      );
+      storeFailure.name = "PrismaClientInitializationError";
+      db.integrationUpsert.mockRejectedValue(storeFailure);
+      await runVerify(strategy);
 
       const written = Object.values(spies)
         .flatMap((spy) => spy.mock.calls.flat())
@@ -611,11 +784,12 @@ describe("configurePassport", () => {
         )
         .join(" ");
 
-      expect(written).not.toContain(ACCESS_TOKEN);
-      expect(written).not.toContain(REFRESH_TOKEN);
-      expect(written).not.toContain(EMAIL);
-      expect(written).not.toContain(STRANGER_EMAIL);
-      expect(written).not.toContain(CLIENT_SECRET);
+      expect(mentions(written, ACCESS_TOKEN)).toBe(false);
+      expect(mentions(written, REFRESH_TOKEN)).toBe(false);
+      expect(mentions(written, EMAIL)).toBe(false);
+      expect(mentions(written, STRANGER_EMAIL)).toBe(false);
+      expect(mentions(written, CLIENT_SECRET)).toBe(false);
+      expect(mentions(written, storeFailure.message)).toBe(false);
     });
   });
 

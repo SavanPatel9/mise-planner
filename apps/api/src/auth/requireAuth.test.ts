@@ -12,10 +12,11 @@ const FOREIGN_USER_ID = "user-cuid-someone-else";
 const ACCESS_TOKEN = "fake-access-token-7e2b";
 
 /**
- * What `passport.session()` leaves on an authenticated request, tokens
- * included: the gate may copy the id and nothing else.
+ * What `passport.session()` leaves on an authenticated request, plus a
+ * token-shaped field the real one no longer has (hence the cast): the gate may
+ * copy the id and nothing else.
  */
-const SESSION_USER: Express.User = {
+const SESSION_USER = {
   id: USER_ID,
   email: "chef@example.com",
   name: "Mise Chef",
@@ -24,7 +25,7 @@ const SESSION_USER: Express.User = {
     refreshToken: "fake-refresh-token-1a44",
     scopes: "openid email",
   },
-};
+} as Express.User;
 
 interface StubLogin {
   authenticated: boolean;

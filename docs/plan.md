@@ -302,9 +302,52 @@ lacks, so M3-T3 carries a small migration of its own.
     `AuthErrorFlag` from `@mise/shared` (type-only exports; the package has
     no build).
 
-- [ ] **M2-T6 — Integration row storage for Google tokens [review: line-by-line]**
+- [x] **M2-T6 — Integration row storage for Google tokens [review: line-by-line]** — done 2026-11-08 (on branch `m2-t6`, awaiting human line-by-line review + merge)
   - depends-on: M2-T1, M2-T3
   - files: `apps/api/src/services/integrations.ts`, `apps/api/src/services/integrations.test.ts`
+  - note: `upsertGoogleIntegration` / `getGoogleTokens` (the only sanctioned read
+    path), Prisma client injectable. AAD contexts are `${userId}:accessToken` /
+    `${userId}:refreshToken`; refresh-token preservation is done by omitting
+    `refreshTokenEnc` from the upsert's `update` object when none arrived — no
+    transaction, no read-modify-write (approved at gate 1). Whitespace-only
+    refresh tokens count as absent (review finding); account emails are
+    trim+lowercased to match `googleVerify`; scopes stored space-delimited
+    verbatim (full URLs) and returned as `string[]` for set-membership checks.
+    Sign-in wiring: `persistGoogleTokens` is an injected dep of
+    `verifyGoogleProfile`, called after allowlist + `User` upsert; failure
+    becomes refusal reason `token_persist_failed` → existing `?authError=failed`
+    flow with the pre-auth session destroyed (no logged-in-but-tokenless state;
+    the orphaned `User` row is accepted — next sign-in repairs it). The `google`
+    token field is gone from `AuthenticatedUser`/`Express.User`: tokens never
+    ride the session. One fixed token-free `console.error` (error class name
+    via `logSafe`, now exported from `middleware/errorHandler.ts`) marks a
+    persist failure.
+  - deviations:
+    - Beyond the task file list (declared in-scope at gate 1): `googleVerify.ts`,
+      `passport.ts`, `types/express.d.ts`, `middleware/errorHandler.ts` (export
+      only), a comment in `routes/auth.ts`, fixture updates in
+      `requireAuth.test.ts`/`routes/auth.test.ts`/`googleVerify.test.ts`/
+      `passport.test.ts`, and `apps/api/vitest.config.ts` (per-run random
+      `TOKEN_ENCRYPTION_KEY` — the app import graph now loads `tokenCrypto`, so
+      suites crash at import without it).
+    - `integrations.ts` uses `"GOOGLE" satisfies Provider` with a type-only
+      import — the runtime enum crashes under test mocks of `@mise/db`.
+  - security pass: manual dispatch (the `/security-review` skill needs
+    `origin/HEAD`; repo has no remote) — pass after one fix (a literal NUL in
+    `integrations.test.ts` made the file binary to `git diff`). Notes left for
+    the line-by-line review: AAD binds `userId` only, not
+    `provider`/`accountEmail` (plan-specified); an empty granted-scope response
+    falls back to the requested scope string, which is then persisted;
+    pre-existing — a rejected `user.upsert` can quote the email in
+    `errorHandler` logs.
+  - **deploy prerequisite: `TOKEN_ENCRYPTION_KEY` must be set in Vercel env
+    before the next deploy** — `createApp()` now imports `tokenCrypto`, so a
+    missing key fails the whole Function at cold start (fail-closed).
+  - handoffs: M6-T2 — read tokens only through `getGoogleTokens(userId,
+accountEmail)`; it returns scopes as full-URL `string[]` for membership
+    checks, never compare against `GOOGLE_SCOPE_STRING`. Known pre-existing
+    flake: `tokenCrypto.test.ts` IV-prefix assertion fails ~0.5% of runs —
+    deserves its own task.
   - accept:
     - On successful sign-in, tokens are encrypted and upserted on the `@@unique([userId, provider, accountEmail])` key; re-login updates rather than duplicates.
     - A missing refresh token on re-consent does not overwrite a previously stored one with `null`.

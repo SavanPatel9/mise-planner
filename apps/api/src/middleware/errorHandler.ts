@@ -16,7 +16,8 @@ const CLIENT_ERROR_MESSAGES: Record<number, string> = {
 };
 
 /**
- * Everything this module logs goes through here first. An error's message — and
+ * Everything logged by this module — and by the sign-in path, which imports it
+ * for the same reason — goes through here first. An error's message — and
  * so its stack, which quotes it — can carry text the caller chose:
  * passport-oauth2 builds its `AuthorizationError` out of the OAuth callback's
  * `error_description` query parameter, for one. A raw newline in that text would
@@ -24,7 +25,7 @@ const CLIENT_ERROR_MESSAGES: Record<number, string> = {
  * entries, so control characters are escaped rather than emitted. The cost is a
  * single-line stack trace, which is the cheaper half of the trade.
  */
-function logSafe(text: string): string {
+export function logSafe(text: string): string {
   return text.replace(
     /\p{Cc}/gu,
     (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`,

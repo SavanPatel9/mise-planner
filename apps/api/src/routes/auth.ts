@@ -168,8 +168,8 @@ export function createAuthRouter(): Router {
       return;
     }
 
-    // Field by field, never a spread: `req.user` can carry the live Google
-    // tokens on the request that completed sign-in.
+    // Field by field, never a spread: `req.user` is identity only today, but
+    // the response shape is `MeResponse`, not whatever a future column adds.
     const { id, email, name } = req.user;
     const body: MeResponse = { id, email, name };
     res.json(body);

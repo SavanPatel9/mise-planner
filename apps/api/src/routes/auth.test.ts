@@ -44,18 +44,19 @@ const WEB_APP_URL = "http://localhost:5173/";
 const SESSION_USER = { id: USER_ID, email: EMAIL, name: NAME };
 
 /**
- * What a completed verify hands Passport: the stored user plus the live Google
- * credentials. Present here so every assertion about `/api/me`, the session
- * store, and the console has something that must *not* escape.
+ * What a completed verify hands Passport. The real one carries identity alone —
+ * tokens go to the integration service — so the credentials here are deliberate
+ * contraband, cast past the type: every assertion about `/api/me`, the session
+ * store, and the console then has something that must *not* escape.
  */
-const VERIFIED_USER: Express.User = {
+const VERIFIED_USER = {
   ...SESSION_USER,
   google: {
     accessToken: ACCESS_TOKEN,
     refreshToken: REFRESH_TOKEN,
     scopes: GRANTED_SCOPE,
   },
-};
+} as Express.User;
 
 const SECRET_VALUES = [ACCESS_TOKEN, REFRESH_TOKEN, EMAIL, CLIENT_SECRET];
 
