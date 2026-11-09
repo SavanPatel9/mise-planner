@@ -353,9 +353,26 @@ accountEmail)`; it returns scopes as full-URL `string[]` for membership
     - A missing refresh token on re-consent does not overwrite a previously stored one with `null`.
     - Reads are always filtered by `userId`; tests assert a cross-user read returns nothing.
 
-- [ ] **M2-T7 — Web sign-in / sign-out and auth-gated routing [review: line-by-line]**
+- [x] **M2-T7 — Web sign-in / sign-out and auth-gated routing [review: line-by-line]** — done 2026-11-09 (on branch `m2-t7`, awaiting human line-by-line review + merge)
   - depends-on: M2-T4, M2-T5
   - files: `apps/web/src/auth/AuthProvider.tsx`, `apps/web/src/pages/SignIn.tsx`, `apps/web/src/App.tsx`
+  - notes: also added `apps/web/src/auth/authError.ts` (flag parse/strip) and
+    `apps/web/src/auth/authContext.ts` (`useAuth()` lives there, split for the
+    react-refresh lint rule). The signed-out notice (429/unavailable) takes
+    precedence over `?authError` copy so a transient `/api/me` failure can't
+    show a signed-in user a false allowlist rejection; junk flag values render
+    nothing. `signOut()` returns `Promise<boolean>` and clears state only on
+    proof the session is gone: 2xx, or 401/403 (nothing left to destroy). A
+    429 (the auth limiter refuses before `req.logout()` runs), a 5xx (the
+    logout callback can error with the session alive), or a network failure
+    keeps the user signed in with retry copy and an in-flight-disabled button
+    (security pass + review findings). `replaceState` uses the parsed
+    absolute URL (a `//host` path would otherwise throw `SecurityError`).
+  - handoffs: M3+ — screens mount inside `AppShell`; consume auth via
+    `useAuth()` from `apps/web/src/auth/authContext`; anything fetched through
+    `apiFetch` inherits 401 → sign-in automatically. Known gaps: a rate-limited
+    sign-in navigation shows the API's raw 429 JSON (top-level navigation,
+    outside the SPA); no CSP headers yet — cheap future hardening.
   - accept:
     - Unauthenticated users see the sign-in screen; authenticated users see the app shell, resolved from `GET /api/me` on load.
     - A `401` from any API call returns the user to the sign-in screen.

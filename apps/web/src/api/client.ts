@@ -15,6 +15,34 @@ export class ApiRequestError extends Error {
 
 const FALLBACK_ERROR: ApiError = { error: "Unexpected error" };
 
+/** Called once per `401`, before the error is thrown. */
+type UnauthorizedHandler = () => void;
+
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+/**
+ * Registers the single callback `apiFetch` runs when the session has gone (any
+ * `401`), so one expired cookie returns the whole app to the sign-in screen.
+ * The dependency only ever points this way — nothing here imports auth code —
+ * which is what keeps the client free of a cycle with the provider.
+ *
+ * Returns a teardown that clears the slot **only if this handler is still the
+ * registered one**: React's StrictMode runs an effect's cleanup after a later
+ * registration may already have landed, and an unconditional clear there would
+ * silently disarm it.
+ */
+export function setUnauthorizedHandler(
+  handler: UnauthorizedHandler | null,
+): () => void {
+  unauthorizedHandler = handler;
+
+  return () => {
+    if (unauthorizedHandler === handler) {
+      unauthorizedHandler = null;
+    }
+  };
+}
+
 function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     typeof value === "object" &&
@@ -69,6 +97,16 @@ export async function apiFetch<T>(
   });
 
   if (!res.ok) {
+    if (res.status === 401) {
+      // Fire-and-forget: the handler only flips auth state, and a throw from it
+      // must not replace the `ApiRequestError` callers branch on by instance.
+      try {
+        unauthorizedHandler?.();
+      } catch {
+        // ignored
+      }
+    }
+
     throw new ApiRequestError(res.status, await parseErrorBody(res));
   }
 
