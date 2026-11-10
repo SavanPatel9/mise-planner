@@ -382,9 +382,25 @@ accountEmail)`; it returns scopes as full-URL `string[]` for membership
 
 ## M3 — Tasks CRUD and lazy rollover
 
-- [ ] **M3-T1 — Shared task contracts and request validation**
+- [x] **M3-T1 — Shared task contracts and request validation** — done 2026-11-10 (on branch `m3-t1`, awaiting human review + merge)
   - depends-on: M2-T5
   - files: `packages/shared/src/task.ts`, `apps/api/src/routes/tasks.schema.ts`
+  - notes: also added `apps/api/src/middleware/validate.ts` (in-scope per task
+    brief) and its `express.d.ts` augmentation. Priority range settled at 1–3
+    (1 = highest); update accepts `null` to clear `project`/`estimateMin`/
+    `dueAt` (gate-approved). `CreateTaskInput` excludes `status`/`source` —
+    server assigns `TODO`; the Prisma default for `source` is `DUMP`, so the
+    M3-T2 service must set `MANUAL` explicitly on API creates. Schema↔contract
+    drift guard is bidirectional (assignability + `keyof` both ways); blind
+    spot: refinement-only changes. `dueAt` accepts the `Z` form only.
+    `TASK_PROJECT_MAX_LENGTH = 200`, title max 500.
+  - handoffs: M3-T2 — mount validators and read payloads only via
+    `const v = validate(schema, source)` + `v.data(req)` (Symbol-keyed slots;
+    never read `req.validated` directly, never write `req.query`). Per-source
+    validators report one source per 400 round trip (deliberate). "Used by
+    both apps" is half-met until M3-T4 imports the task types in `apps/web`
+    (web typechecks against the exports today). Async schemas unsupported in
+    `validate` (throws → 500); `params`-source path exists but is untested.
   - accept:
     - Task DTOs, `TaskStatus`/`TaskSource`/priority types, and create/update payload shapes are exported from `packages/shared` and used by both apps.
     - Validation rejects unknown fields, out-of-range priority, and non-positive `estimateMin`, returning `400` with a field-level message.

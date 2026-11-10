@@ -5,7 +5,7 @@
  */
 export class AppError extends Error {
   readonly status: number;
-  /** Per-field validation messages, surfaced as the `fields` of a 422 body. */
+  /** Per-field validation messages, surfaced as the `fields` of a 400 body. */
   readonly fields?: Record<string, string>;
 
   constructor(

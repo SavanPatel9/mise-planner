@@ -33,9 +33,13 @@ function buildApp(): Express {
     throw `string throw ${INTERNAL_SENTINEL}`;
   });
 
-  app.all("/validation", () => {
-    throw new AppError(422, "Validation failed", {
-      title: "Title is required",
+  // An arbitrary 4xx with `fields`, deliberately *not* a validation failure:
+  // `validate` answers 400, and nothing in the API pairs 422 with
+  // "Validation failed". This only pins down that the handler passes an
+  // AppError's status, message, and fields through unchanged.
+  app.all("/fielded", () => {
+    throw new AppError(422, "Unprocessable thing", {
+      slot: "Already taken",
     });
   });
 
@@ -137,12 +141,12 @@ describe("errorHandler", () => {
   });
 
   it("surfaces an AppError's status, message, and fields", async () => {
-    const response = await request(buildApp()).post("/validation");
+    const response = await request(buildApp()).post("/fielded");
 
     expect(response.status).toBe(422);
     expect(response.body).toEqual({
-      error: "Validation failed",
-      fields: { title: "Title is required" },
+      error: "Unprocessable thing",
+      fields: { slot: "Already taken" },
     });
   });
 
@@ -205,7 +209,7 @@ describe("errorHandler", () => {
     const status = vi.fn().mockReturnThis();
     const res = { headersSent: true, status, json } as unknown as Response;
     const next = vi.fn() as unknown as NextFunction;
-    const err = new AppError(422, "Validation failed");
+    const err = new AppError(422, "Unprocessable thing");
 
     errorHandler(err, {} as Request, res, next);
 

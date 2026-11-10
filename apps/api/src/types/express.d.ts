@@ -24,6 +24,18 @@ declare global {
      */
     interface Request {
       auth?: { userId: string };
+
+      /**
+       * Where `validate` leaves parsed input, one slot per validator so a route
+       * can validate its params and its body — or two schemas against the same
+       * source — independently. Keyed by symbol because each validator owns a
+       * private one: no other code can name a slot, let alone read the wrong
+       * one. Typed `unknown` on purpose, since the schema's output type is
+       * recovered by that validator's own `data(req)` accessor, which is the
+       * only thing that should read this. `req[source]` itself is left alone —
+       * Express 5's `req.query` has no setter.
+       */
+      validated?: Record<symbol, unknown>;
     }
   }
 }
