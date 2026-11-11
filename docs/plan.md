@@ -290,11 +290,15 @@ lacks, so M3-T3 carries a small migration of its own.
     limiter (the half that protects the store) kept its planned pre-session
     position. `SESSION_MAX_AGE_MS` exported (was private); `userIdOf`
     accessor instead of an `AuthenticatedRequest` type.
-  - open (non-blocking, deferred): end-to-end probe that a real gated router
-    sees `req.auth.userId` under live Passport — free once M3-T2 mounts the
-    first gated route; verify on a preview deploy that a client-sent
+  - open (non-blocking, deferred): verify on a preview deploy that a client-sent
     `x-vercel-forwarded-for` is stripped by the edge (the keying rests on
     that platform guarantee); fixed window admits 2×max across a boundary.
+  - closed by M3-T2: the end-to-end probe that a real gated router sees
+    `req.auth.userId` under live Passport. `/api/tasks` is the first router
+    mounted below the gate, and the proof lives in its suite
+    (`apps/api/src/routes/tasks.test.ts`, added with M3-T2's tests): a request
+    signed in through the Passport double reaches the task service with the
+    session user's id in every `where`.
   - handoffs: M3 routers — mount below the `requireAuth` line in `app.ts` and
     read `userId` only via `req.auth`/`userIdOf`; any feature polling faster
     than ~1 req/s sustained trips the general 600/10min cap — raise it or
@@ -405,9 +409,64 @@ accountEmail)`; it returns scopes as full-URL `string[]` for membership
     - Task DTOs, `TaskStatus`/`TaskSource`/priority types, and create/update payload shapes are exported from `packages/shared` and used by both apps.
     - Validation rejects unknown fields, out-of-range priority, and non-positive `estimateMin`, returning `400` with a field-level message.
 
-- [ ] **M3-T2 — Task service and CRUD routes**
+- [x] **M3-T2 — Task service and CRUD routes** — done 2026-11-10 (on branch `m3-t2`, awaiting human review + merge)
   - depends-on: M3-T1
   - files: `apps/api/src/services/tasks.ts`, `apps/api/src/routes/tasks.ts`, `apps/api/src/routes/tasks.test.ts`
+  - notes: `listTasks`/`createTask`/`updateTask`/`deleteTask`, Prisma client
+    injectable (`TaskClient`, narrowed to the five statements plus
+    `$transaction`) as in `services/integrations.ts`. One `TASK_SELECT`
+    (`satisfies Record<keyof Task, true>` — a DTO field added without being
+    selected fails the build) feeds `toTaskDto`, which maps field by field and
+    `toISOString()`s the three timestamps: no Prisma row ever leaves the
+    module. Ownership is enforced by the statement, not by an application-level
+    comparison: `updateMany`/`deleteMany` on `{ id, userId }`, `count === 0` →
+    `AppError(404, "Not Found")` — the same wire text as the path-less 404, so
+    a foreign task is indistinguishable from one that never existed. The update
+    reads the row back inside an interactive `$transaction` (every inner query
+    through `tx`) because `updateMany` returns only a count. `source: "MANUAL"`
+    is set explicitly (the column defaults to `DUMP`); `status` is left to the
+    column default, which is `TODO` for every writer. Routes are a plain
+    `Router` with no try/catch (Express 5 forwards rejections) and read input
+    only through `validate(...).data(req)`; `GET` answers a bare JSON array
+    (no envelope — single user, no pagination), `POST` 201 + DTO, `PATCH` 200 +
+    the updated DTO, `DELETE` 204 empty.
+  - deviations (both approved at the gate): `taskIdParamsSchema` added to
+    `routes/tasks.schema.ts` (outside this task's file list) — a lenient
+    charset+length check, deliberately not `z.cuid()`, so a garbage `:id` is a
+    400 before any DB access and the schema's id format can change freely.
+    List order adds `createdAt asc` after `priority`/`dueAt` (accept criterion
+    names only the first two): without it, equal-priority undated tasks come
+    back in whatever order Postgres chose and the list reshuffles between
+    requests.
+  - resolved (review, against real Postgres): `PATCH` with an empty body `{}`
+    was _not_ a 200 no-op. `updateMany` with `data: {}` matches zero rows, so
+    the `count === 0` branch answered 404 for a task that exists and belongs to
+    the caller. Fixed in the schema, not the service: `updateTaskSchema` now
+    carries a `.refine` requiring at least one known key (`undefined` values
+    count as absent, since Prisma ignores them), so an empty patch is a 400
+    `Validation failed` with the message under `_root` (`ROOT_FIELD_KEY`) — an
+    empty patch is a client bug, not a request to serve.
+  - resolved (security review): `estimateMin` validated with `z.int()`, which
+    tops out at `MAX_SAFE_INTEGER` — a value past int32 passed validation and
+    would overflow the Postgres `int4` column into a 500. Now `z.int32()`, so
+    it's a 400 at the boundary. Inherited from M3-T1's schema but first
+    reachable once these routes existed.
+  - handoffs: M3-T3 — rollover writes `Task` rows too; keep it in
+    `services/rollover.ts` but reuse this module's rule that every `where`
+    carries `userId`. M3-T4 — the list endpoint returns `Task[]` as a bare
+    array and `PATCH` returns the updated `Task`, so the web app never needs a
+    re-fetch after a status change. M5-T3 — bulk create from a brain dump must
+    _not_ reuse `createTask` as-is: it pins `source: "MANUAL"`. Tests mock
+    `@mise/db` at the module boundary (the routes call the services with the
+    default client); `TaskClient`/`TaskTransactionClient` are exported for
+    service-level doubles, and an interactive-transaction double is just
+    `$transaction: (run) => run(txDouble)`. Known gap: the hand-written
+    narrowed Prisma arg interfaces in `services/tasks.ts` are only as true as
+    the hand that wrote them — a mocked client satisfies them by construction,
+    so the suite cannot tell whether real Prisma/Postgres accepts the
+    statement (this is exactly how the empty-`data` 404 above survived to
+    review, where it was caught by hand against an ephemeral Postgres).
+    Catching that bug class needs a DB-backed test.
   - accept:
     - `GET/POST /api/tasks`, `PATCH/DELETE /api/tasks/:id` work; list supports filtering by status and sorts by priority then `dueAt`.
     - Every query includes `userId` in its `where`; a task belonging to another user returns `404`, not `403` or the row.

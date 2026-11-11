@@ -13,6 +13,7 @@ import {
 } from "./middleware/rateLimit.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { healthRouter } from "./routes/health.js";
+import { tasksRouter } from "./routes/tasks.js";
 
 export interface CreateAppOptions {
   /** Passed through to the session middleware; see `auth/session.ts`. */
@@ -86,6 +87,8 @@ export function createApp(options: CreateAppOptions = {}) {
   // being signed in, and `/api/me` answers its own 401 so the web app can tell
   // "not signed in" from "gate refused you".
   app.use("/api", requireAuth);
+
+  app.use("/api/tasks", tasksRouter);
 
   app.use(notFound);
   app.use(errorHandler);

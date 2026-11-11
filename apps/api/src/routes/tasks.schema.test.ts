@@ -175,6 +175,15 @@ describe("createTaskSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects an estimateMin beyond int32 — it would overflow the column", () => {
+    const result = createTaskSchema.safeParse({
+      title: "Write tests",
+      estimateMin: 2_147_483_648,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects a malformed dueAt", () => {
     const result = createTaskSchema.safeParse({
       title: "Write tests",
@@ -284,11 +293,25 @@ describe("updateTaskSchema", () => {
     expect(result.data).toEqual({ project: "mise" });
   });
 
-  it("accepts an empty update object", () => {
+  it("rejects an empty update object — a patch naming no field cannot be served", () => {
     const result = updateTaskSchema.safeParse({});
 
-    expect(result.success).toBe(true);
-    expect(result.data).toEqual({});
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // Empty path: the check is on the whole object, which is what the
+      // validate middleware reports under `ROOT_FIELD_KEY`.
+      expect(result.error.issues).toHaveLength(1);
+      expect(result.error.issues[0]?.path).toEqual([]);
+      expect(result.error.issues[0]?.message).toBe(
+        "Provide at least one field to update",
+      );
+    }
+  });
+
+  it("rejects an update whose only key is undefined — Prisma would ignore it", () => {
+    const result = updateTaskSchema.safeParse({ title: undefined });
+
+    expect(result.success).toBe(false);
   });
 
   it("accepts a status transition", () => {
