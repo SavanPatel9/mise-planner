@@ -3,17 +3,32 @@ import passport from "passport";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 
-// Prisma is mocked at the module boundary: `deserializeUser` is the only
-// database call an authenticated request makes, and no test here may open a
-// connection. The spy lives outside the factory (`vi.hoisted`) so the suite can
-// re-arm it per test.
+// Prisma is mocked at the module boundary: `deserializeUser` and the day
+// rollover are the database calls an authenticated request makes, and no test
+// here may open a connection. The spies live outside the factory (`vi.hoisted`)
+// so the suite can re-arm them per test.
 const db = vi.hoisted(() => ({
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  // The rollover's transaction and the claim inside it
+  // (`middleware/rollover.ts`), which every authenticated request below the
+  // gate now carries. Armed in `beforeEach` to "already rolled over today", so
+  // the rollover succeeds and defers nothing — without `$transaction` here the
+  // middleware would swallow a `not a function` TypeError and every signed-in
+  // test below would silently run against a *failing* rollover.
+  transaction: vi.fn(),
+  userUpdateMany: vi.fn(),
 }));
 
 vi.mock("@mise/db", () => ({
-  prisma: { user: { findUnique: db.findUnique, upsert: db.upsert } },
+  prisma: {
+    user: {
+      findUnique: db.findUnique,
+      upsert: db.upsert,
+      updateMany: db.userUpdateMany,
+    },
+    $transaction: db.transaction,
+  },
 }));
 
 import { createApp } from "./app.js";
@@ -128,6 +143,26 @@ describe("createApp", () => {
     db.findUnique.mockReset();
     db.findUnique.mockResolvedValue(SESSION_USER);
     db.upsert.mockReset();
+
+    // Today's rollover is already done: the claim matches no row, so the
+    // transaction commits without touching a task.
+    // `services/rollover.test.ts` owns the other branch.
+    db.userUpdateMany.mockReset();
+    db.userUpdateMany.mockResolvedValue({ count: 0 });
+    db.transaction.mockReset();
+    db.transaction.mockImplementation(
+      (
+        run: (tx: {
+          user: { updateMany: (args: unknown) => Promise<{ count: number }> };
+        }) => Promise<unknown>,
+      ) =>
+        run({
+          user: {
+            updateMany: (args) =>
+              db.userUpdateMany(args) as Promise<{ count: number }>,
+          },
+        }),
+    );
   });
 
   afterEach(() => {

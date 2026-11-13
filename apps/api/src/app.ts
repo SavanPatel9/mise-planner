@@ -11,6 +11,7 @@ import {
   createRateLimit,
   DEFAULT_GENERAL_RATE_LIMIT_MAX,
 } from "./middleware/rateLimit.js";
+import { rollover } from "./middleware/rollover.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { healthRouter } from "./routes/health.js";
 import { tasksRouter } from "./routes/tasks.js";
@@ -25,8 +26,8 @@ export interface CreateAppOptions {
  * tests can inject a session store and avoid a database connection.
  *
  * Registration order is execution order: the rate limits → parsers → session →
- * health → Passport → the pre-auth TTL → the auth router → `requireAuth` →
- * gated routers → the path-less 404 → the error handler (last).
+ * health → Passport → the pre-auth TTL → the auth router → `requireAuth` → the
+ * day rollover → gated routers → the path-less 404 → the error handler (last).
  */
 export function createApp(options: CreateAppOptions = {}) {
   const app = express();
@@ -87,6 +88,11 @@ export function createApp(options: CreateAppOptions = {}) {
   // being signed in, and `/api/me` answers its own 401 so the web app can tell
   // "not signed in" from "gate refused you".
   app.use("/api", requireAuth);
+
+  // Directly below the gate, so every authenticated request carries the day's
+  // rollover and the handlers below see post-rollover `deferCount`s. A sibling
+  // of `requireAuth` rather than part of it: authorization stays one thing.
+  app.use("/api", rollover);
 
   app.use("/api/tasks", tasksRouter);
 

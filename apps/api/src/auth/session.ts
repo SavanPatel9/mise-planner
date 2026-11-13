@@ -85,10 +85,13 @@ function createPostgresStore(): session.Store {
 
   return new PgStore({
     pool,
-    // Owned entirely by connect-pg-simple. It must never appear in
-    // schema.prisma, which already has an unrelated "Session" model (Pomodoro).
+    // Owned entirely by connect-pg-simple at runtime. It must never appear in
+    // schema.prisma, which already has an unrelated "Session" model (Pomodoro);
+    // Prisma ignores it via `tables.external` in prisma.config.ts. The table is
+    // created by the `create_user_sessions` migration, which reproduces the
+    // library's own DDL exactly, so nothing has to be created on first request.
     tableName: "user_sessions",
-    createTableIfMissing: true,
+    createTableIfMissing: false,
     // The default logs whole error objects (a failed prune, say), and a pg
     // error carries the connection string. Messages only, as above.
     errorLog: (...args: unknown[]) => {

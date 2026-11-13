@@ -8,10 +8,16 @@ import type { Mock } from "vitest";
 // every middleware, the real gate, the real validators — so the only thing
 // standing in for a database is the client the task service defaults to. The
 // spies live outside the factory (`vi.hoisted`) so the suite can re-arm them
-// per test. `user.findUnique` is there for `deserializeUser`, the one query an
-// authenticated request makes before reaching a route.
+// per test. The two `user` statements are the ones an authenticated request
+// makes before reaching a route: `findUnique` for `deserializeUser`, and
+// `updateMany` for the day rollover.
 const db = vi.hoisted(() => ({
   findUnique: vi.fn(),
+  // The day rollover's claim on the user row, which every authenticated request
+  // now carries (`middleware/rollover.ts`). Armed below to "already rolled over
+  // today", so the rollover opens its transaction and touches no task — the
+  // steady state these tests are about.
+  userUpdateMany: vi.fn(),
   findMany: vi.fn(),
   create: vi.fn(),
   // The outer client's two transactional statements: never expected to run,
@@ -29,7 +35,7 @@ const db = vi.hoisted(() => ({
 
 vi.mock("@mise/db", () => ({
   prisma: {
-    user: { findUnique: db.findUnique },
+    user: { findUnique: db.findUnique, updateMany: db.userUpdateMany },
     task: {
       findMany: db.findMany,
       create: db.create,
@@ -147,15 +153,25 @@ interface TxCall {
 const txCalls: TxCall[] = [];
 
 /**
+ * The transaction client both callers see: the task service's two statements
+ * plus the rollover's claim on the user row.
+ */
+type TxDouble = TaskTransactionClient & {
+  user: { updateMany: (args: unknown) => Promise<{ count: number }> };
+};
+
+/**
  * The `$transaction` double: builds a fresh transaction client per call whose
  * two statements delegate to the `tx*` spies while recording the client they
  * ran on. That record is what lets a test prove both halves of an update
  * shared one transaction instead of one of them escaping to the outer client.
  */
-function runInTransaction<T>(
-  run: (tx: TaskTransactionClient) => Promise<T>,
-): Promise<T> {
-  const tx: TaskTransactionClient = {
+function runInTransaction<T>(run: (tx: TxDouble) => Promise<T>): Promise<T> {
+  const tx: TxDouble = {
+    user: {
+      updateMany: (args) =>
+        db.userUpdateMany(args) as Promise<{ count: number }>,
+    },
     task: {
       updateMany: (args) => {
         txCalls.push({ method: "updateMany", tx });
@@ -171,7 +187,12 @@ function runInTransaction<T>(
   return run(tx);
 }
 
-/** Every task-table spy, for the "nothing reached the database" assertions. */
+/**
+ * Every task-table spy, for the "no task statement ran" assertions. `db
+ * .transaction` is deliberately not one of them: the rollover above the router
+ * opens a transaction on every authenticated request, so an open transaction no
+ * longer says anything about the task table.
+ */
 function taskSpies(): Mock[] {
   return [
     db.findMany,
@@ -179,7 +200,6 @@ function taskSpies(): Mock[] {
     db.updateMany,
     db.findFirst,
     db.deleteMany,
-    db.transaction,
     db.txUpdateMany,
     db.txFindFirst,
   ];
@@ -288,11 +308,19 @@ describe("the tasks router", () => {
     vi.stubEnv("WEB_ORIGIN", "http://localhost:5173");
 
     txCalls.length = 0;
-    for (const spy of [db.findUnique, ...taskSpies()]) {
+    for (const spy of [
+      db.findUnique,
+      db.userUpdateMany,
+      db.transaction,
+      ...taskSpies(),
+    ]) {
       spy.mockReset();
     }
 
     db.findUnique.mockResolvedValue(SESSION_USER);
+    // Today's rollover is already done, so it claims nothing and defers
+    // nothing. `services/rollover.test.ts` owns the other branch.
+    db.userUpdateMany.mockResolvedValue({ count: 0 });
     // Defaults every test can rely on: an empty list, a successful write.
     // A test that cares re-arms the one spy it is about.
     db.findMany.mockResolvedValue([]);
@@ -508,8 +536,9 @@ describe("the tasks router", () => {
       });
 
       // Write then read-back, both on the same transaction client: a read on
-      // the outer client could report another writer's value.
-      expect(db.transaction).toHaveBeenCalledTimes(1);
+      // the outer client could report another writer's value. Two
+      // transactions in all — the day rollover opens its own above the router.
+      expect(db.transaction).toHaveBeenCalledTimes(2);
       expect(txCalls.map((call) => call.method)).toEqual([
         "updateMany",
         "findFirst",
@@ -556,7 +585,7 @@ describe("the tasks router", () => {
         error: "Validation failed",
         fields: { _root: "Provide at least one field to update" },
       });
-      // And no transaction was opened at all — the refusal costs no statement.
+      // And no statement reached the task table — the refusal costs no query.
       expectNoTaskQuery();
     });
 
@@ -738,6 +767,54 @@ describe("the tasks router", () => {
       expect(response.status).toBe(400);
       expect(Object.keys(response.body.fields)).toEqual(["id"]);
       expectNoTaskQuery();
+    });
+  });
+
+  describe("the day rollover above the router", () => {
+    it("claims the day for the session's user before the list query", async () => {
+      const { app, cookie } = await signedInApp();
+
+      await request(app).get("/api/tasks").expect(401);
+      // Unauthenticated: the rollover sits below the gate, so a refused
+      // request costs no claim.
+      expect(db.userUpdateMany).not.toHaveBeenCalled();
+
+      await request(app).get("/api/tasks").set("Cookie", cookie).expect(200);
+
+      expect(db.userUpdateMany).toHaveBeenCalledTimes(1);
+      const claim = lastArg<{
+        where: { id: string };
+        data: { lastRolloverOn: Date };
+      }>(db.userUpdateMany);
+      // Keyed by the session's user, and advancing the date to a real day —
+      // `services/rollover.test.ts` pins the statement down in full.
+      expect(claim.where.id).toBe(USER_ID);
+      expect(claim.data.lastRolloverOn).toBeInstanceOf(Date);
+
+      // Ordering is what the mount position buys: a handler that reads
+      // `deferCount` must see the post-rollover value, not yesterday's.
+      const claimedAt = db.userUpdateMany.mock.invocationCallOrder[0] ?? 0;
+      const listedAt = db.findMany.mock.invocationCallOrder[0] ?? 0;
+      expect(claimedAt).toBeLessThan(listedAt);
+    });
+
+    it("still serves the list when the rollover fails", async () => {
+      const { app, cookie } = await signedInApp();
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      // The rollover transaction is the only one a GET opens, so failing it
+      // fails exactly the rollover.
+      db.transaction.mockRejectedValueOnce(new Error("rollover tx failed"));
+      db.findMany.mockResolvedValue([taskRow()]);
+
+      const response = await request(app)
+        .get("/api/tasks")
+        .set("Cookie", cookie);
+
+      // Bookkeeping never costs the caller their response: the list is served
+      // with whatever `deferCount`s the table still holds.
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([taskDto()]);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
     });
   });
 

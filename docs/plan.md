@@ -472,9 +472,20 @@ accountEmail)`; it returns scopes as full-URL `string[]` for membership
     - Every query includes `userId` in its `where`; a task belonging to another user returns `404`, not `403` or the row.
     - Tests cover create, list filtering, update (including status transition to `DONE`), delete, and cross-user isolation.
 
-- [ ] **M3-T3 — Lazy day rollover with deferCount**
+- [x] **M3-T3 — Lazy day rollover with deferCount** — done 2026-11-12 (on branch `m3-t3`, awaiting human review + merge)
   - depends-on: M3-T2
-  - files: `apps/db/prisma/schema.prisma`, `apps/db/prisma/migrations/`, `apps/api/src/services/rollover.ts`, `apps/api/src/auth/requireAuth.ts`, `apps/api/src/services/rollover.test.ts`
+  - files: `apps/db/prisma/schema.prisma`, `apps/db/prisma/migrations/`, `apps/db/prisma.config.ts`, `apps/api/src/services/rollover.ts`, `apps/api/src/middleware/rollover.ts`, `apps/api/src/auth/session.ts`, `apps/api/src/services/rollover.test.ts`, `apps/api/src/middleware/rollover.test.ts`
+  - note: wired as a sibling middleware mounted after `requireAuth` instead of
+    inside `requireAuth.ts` (approved deviation — the gate stays single-purpose;
+    a rollover failure logs and the request proceeds). Approved scope additions:
+    `prisma.config.ts` declares `user_sessions` as an external table so
+    `migrate dev` never drifts on or drops it, the `create_user_sessions`
+    migration now creates the session table (DDL copied from connect-pg-simple's
+    `table.sql`) and `session.ts` sets `createTableIfMissing: false` — the
+    runtime role no longer needs `CREATE`. `prisma`/`@prisma/client` are pinned
+    exactly (the external-table guard rides an experimental config flag).
+    Local day comes from optional `USER_TZ` (IANA, default UTC) — set it in
+    Vercel env before deploying or days roll at UTC midnight.
   - accept:
     - Adds `User.lastRolloverOn DateTime? @db.Date` via a Prisma migration (no hand edits, no `db push`).
     - On the first authenticated request of a new local day, unfinished (`TODO`/`IN_PROGRESS`) tasks increment `deferCount` once and `lastRolloverOn` advances; a second request the same day is a no-op.

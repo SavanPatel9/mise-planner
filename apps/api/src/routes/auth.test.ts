@@ -4,17 +4,32 @@ import passport from "passport";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Prisma is mocked at the module boundary: `deserializeUser` is the only
-// database call an authenticated request makes, and no test here may open a
-// connection. The spies live outside the factory (`vi.hoisted`) so the suite
-// can re-arm them per test.
+// Prisma is mocked at the module boundary: `deserializeUser` and the day
+// rollover are the database calls an authenticated request makes, and no test
+// here may open a connection. The spies live outside the factory (`vi.hoisted`)
+// so the suite can re-arm them per test.
 const db = vi.hoisted(() => ({
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  // The rollover's transaction and the claim inside it
+  // (`middleware/rollover.ts`): a signed-in request that falls past the auth
+  // router reaches the gate and then the rollover. Armed in `beforeEach` to
+  // "already rolled over today" — without `$transaction` here the middleware
+  // would swallow a `not a function` TypeError, so such a request would be
+  // tested only against a *failing* rollover.
+  transaction: vi.fn(),
+  userUpdateMany: vi.fn(),
 }));
 
 vi.mock("@mise/db", () => ({
-  prisma: { user: { findUnique: db.findUnique, upsert: db.upsert } },
+  prisma: {
+    user: {
+      findUnique: db.findUnique,
+      upsert: db.upsert,
+      updateMany: db.userUpdateMany,
+    },
+    $transaction: db.transaction,
+  },
 }));
 
 import { createApp } from "../app.js";
@@ -355,6 +370,25 @@ describe("auth routes", () => {
     db.findUnique.mockReset();
     db.findUnique.mockResolvedValue(SESSION_USER);
     db.upsert.mockReset();
+
+    // Today's rollover is already done: the claim matches no row, so the
+    // transaction commits without touching a task.
+    db.userUpdateMany.mockReset();
+    db.userUpdateMany.mockResolvedValue({ count: 0 });
+    db.transaction.mockReset();
+    db.transaction.mockImplementation(
+      (
+        run: (tx: {
+          user: { updateMany: (args: unknown) => Promise<{ count: number }> };
+        }) => Promise<unknown>,
+      ) =>
+        run({
+          user: {
+            updateMany: (args) =>
+              db.userUpdateMany(args) as Promise<{ count: number }>,
+          },
+        }),
+    );
   });
 
   afterEach(() => {

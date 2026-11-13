@@ -1,7 +1,8 @@
 // Mise data model — see docs/spec.md for the narrative version.
 // Conventions: userId on every user-owned table; createdAt/updatedAt everywhere;
 // every FK indexed; onDelete explicit. The express-session store table is
-// created by connect-pg-simple and intentionally NOT modeled here.
+// created by the create_user_sessions migration, owned at runtime by
+// connect-pg-simple, and intentionally NOT modeled here (see prisma.config.ts).
 
 generator client {
   provider = "prisma-client-js"
@@ -15,14 +16,16 @@ datasource db {
 }
 
 model User {
-  id           String        @id @default(cuid())
-  email        String        @unique
-  name         String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  tasks        Task[]
-  sessions     Session[]
-  integrations Integration[]
+  id             String        @id @default(cuid())
+  email          String        @unique
+  name           String?
+  // Local calendar day the lazy rollover last ran for; null until the first one
+  lastRolloverOn DateTime?     @db.Date
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  tasks          Task[]
+  sessions       Session[]
+  integrations   Integration[]
   // dailyPlans   DailyPlan[] // restored in M6-T1
 }
 
