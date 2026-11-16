@@ -491,9 +491,45 @@ accountEmail)`; it returns scopes as full-URL `string[]` for membership
     - On the first authenticated request of a new local day, unfinished (`TODO`/`IN_PROGRESS`) tasks increment `deferCount` once and `lastRolloverOn` advances; a second request the same day is a no-op.
     - Rollover runs in a transaction and is skipped entirely for days the app wasn't opened (no catch-up multi-increment).
 
-- [ ] **M3-T4 — Web task list screen** (parallel-ok with M4-T1)
+- [x] **M3-T4 — Web task list screen** — done 2026-11-16 (on branch `m3-t4`, awaiting human review + merge) (parallel-ok with M4-T1)
   - depends-on: M3-T2
-  - files: `apps/web/src/pages/Tasks.tsx`, `apps/web/src/api/tasks.ts`, `apps/web/src/components/TaskRow.tsx`
+  - files: `apps/web/src/pages/Tasks.tsx`, `apps/web/src/api/tasks.ts`, `apps/web/src/components/TaskRow.tsx`, `apps/web/src/pages/Tasks.test.tsx`
+  - note: `DROPPED` sits behind a "Show dropped (n)" toggle below the three
+    groups (call left open by the dispatch) — dropped tasks are noise on a
+    working screen. Rollback is per row, not whole-list, so concurrent
+    mutations on other rows survive one failing; in-flight row ids are held in
+    a pending set that freezes that row's controls. A failed create restores
+    the submitted form values so a 400 is corrected, not retyped; its field
+    messages render under the matching inputs. The client re-sorts with the
+    server's comparator (priority, `dueAt` nulls last, `createdAt`) so
+    optimistic rows land where a re-fetch would put them.
+  - deviations: `apps/web/src/App.tsx` and `App.test.tsx` touched (outside the
+    file list) to make the signed-in default view the task list — the shell's
+    test harness gained a default `GET /api/tasks → []` route, `renderShell`
+    now waits for the list to settle, and the mid-session-expiry test
+    re-routes its 401 after mount since the shell itself now reads
+    `/api/tasks`.
+  - resolved (self-review via code-reviewer, pre-merge): a create 400 whose
+    `fields` named no rendered input (e.g. the validator's `_root` key)
+    vanished without copy — unrenderable fields now fall through to the
+    generic line; an out-of-range `datetime-local` could throw `RangeError`
+    from `toISOString()` before any request — both submit paths now guard and
+    show a field message; submit controls now restore keyboard focus after
+    settling (the Settings pattern); row action buttons carry the task title
+    in their accessible names (N bare "Edit" buttons were indistinguishable);
+    the create form's duplicate "normal priority" spelling dropped. Tests
+    added for the unrenderable-400 fallback, per-row rollback isolation with
+    a frozen in-flight row, sort order (fixtures chosen so sorted and append
+    order differ; undated-last pinned via an authoritative PATCH response
+    re-sorting a row), and settle-time focus restoration (restored, left
+    alone when the user moved on, and per-row). The verify pass also caught
+    the due-date guard returning before the mutation banner was cleared —
+    both message slots now clear before any validation can return early.
+  - known gaps (flagged, deliberately not fixed here): the API passes zod's
+    raw issue text through as field copy (`validate.ts`, an API-side task);
+    due-date entry/display uses the device zone, not `User.timezone` from
+    M3-T5; nothing on this screen sets `IN_PROGRESS` — M4's session flow owns
+    that transition, and unchecking a done task always returns it to `TODO`.
   - accept:
     - Tasks render grouped by status with inline create, edit, complete, and delete; optimistic updates roll back on API error.
     - `deferCount > 0` is visible on the row; estimate and project are shown when present.

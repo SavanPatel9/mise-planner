@@ -6,6 +6,7 @@ import { useAuth } from "./auth/authContext";
 import { stripAuthErrorParam } from "./auth/authError";
 import { Settings } from "./pages/Settings";
 import { SignIn } from "./pages/SignIn";
+import { Tasks } from "./pages/Tasks";
 import { useDetectedTimezone } from "./settings/useDetectedTimezone";
 
 export function App() {
@@ -159,16 +160,7 @@ function AppShell({
         aria-label={VIEW_LABELS[view]}
         className="px-6 py-10"
       >
-        {view === "settings" ? (
-          <Settings />
-        ) : (
-          <>
-            <h2 className="text-lg font-semibold text-slate-900">Today</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Your day&rsquo;s plan will appear here.
-            </p>
-          </>
-        )}
+        {view === "settings" ? <Settings /> : <Tasks />}
       </main>
     </div>
   );

@@ -16,6 +16,7 @@ const USER = { id: "user-cuid-m2t7", email: "chef@example.com", name: "Chef" };
 const ME = "/api/me";
 const LOGOUT = "/api/auth/logout";
 const SETTINGS = "/api/settings";
+const TASKS = "/api/tasks";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -50,12 +51,15 @@ const unauthorized = json(401, { error: "Unauthorized" });
 
 /**
  * Routed for every test unless it says otherwise: the signed-in shell reads
- * settings on mount to fill in a detected timezone, which is not what the
- * tests here are about. `EXPLICIT` is the quiet answer — detection leaves an
- * explicit choice alone, so no `PATCH` follows.
+ * settings on mount to fill in a detected timezone, and its default view is
+ * now the task list, which reads `/api/tasks` — neither is what the tests
+ * here are about. `EXPLICIT` is the quiet answer — detection leaves an
+ * explicit choice alone, so no `PATCH` follows — and an empty task list is
+ * the quiet answer on the other path.
  */
 const DEFAULT_ROUTES: Routes = {
   [SETTINGS]: ok({ timezone: "UTC", timezoneSource: "EXPLICIT" }),
+  [TASKS]: ok([]),
 };
 
 /** A request that never reaches the server: what `fetch` itself rejects with. */
@@ -453,11 +457,19 @@ describe("App shell navigation", () => {
     screen.getByRole("button", { name: /back to today/i });
   const main = () => screen.getByRole("main");
 
-  /** Signs in and waits for the shell, which is where the toggle lives. */
+  /**
+   * Signs in and waits for the shell, which is where the toggle lives — and
+   * then for the task list (the default view) to finish loading, so its
+   * spinner can't linger as a second `role="status"` region under assertions
+   * that expect only the shell's.
+   */
   async function renderShell(): Promise<void> {
     render(<App />);
     expect(
       await screen.findByText("Chef · chef@example.com"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: /to do/i }),
     ).toBeInTheDocument();
   }
 
@@ -607,13 +619,16 @@ describe("App shell navigation", () => {
 
 describe("App mid-session expiry", () => {
   it("returns to sign-in when any later request 401s", async () => {
-    route({ [ME]: ok(USER), "/api/tasks": unauthorized });
+    route({ [ME]: ok(USER) });
 
     render(<App />);
     expect(
       await screen.findByText("Chef · chef@example.com"),
     ).toBeInTheDocument();
 
+    // Re-routed only after the shell settled: the task list reads this path
+    // on mount, and the point here is a request that expires *mid*-session.
+    route({ [ME]: ok(USER), [TASKS]: unauthorized });
     await act(async () => {
       await expect(apiFetch("/tasks")).rejects.toBeInstanceOf(ApiRequestError);
     });
