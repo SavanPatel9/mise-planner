@@ -462,3 +462,172 @@ describe("Settings save", () => {
     expect(currentZone()).toBe("Europe/Paris");
   });
 });
+
+describe("Resuming detection", () => {
+  const RESUME = "POST /api/settings/resume-detection";
+  const DETECT = "PATCH /api/settings/detected";
+  const DETECT_FAILED = "Couldn't turn detection back on. Please try again.";
+  const DETECT_RESUMED = "Timezone detection turned back on.";
+
+  const noContent = () => Promise.resolve(new Response(null, { status: 204 }));
+
+  const detectButton = () =>
+    screen.getByRole("button", { name: /detect automatically/i });
+
+  /** Every request this test issued to one `METHOD /path`, in order. */
+  const callsTo = (key: string) =>
+    fetchMock.mock.calls.filter(([input, init]) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      return `${init?.method ?? "GET"} ${path}` === key;
+    });
+
+  /**
+   * The zone this test environment actually reports, so the cases hold on any
+   * machine: a "differing" stored zone is derived from it rather than fixed.
+   */
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const otherZone =
+    browserZone === "America/Chicago" ? "Asia/Tokyo" : "America/Chicago";
+
+  it("names the source and offers the way back only for an explicit choice", async () => {
+    route({ [LOAD]: stored(otherZone, "EXPLICIT") });
+
+    render(<Settings />);
+    await waitForForm();
+
+    expect(
+      screen.getByText("Chosen by you — detection is off."),
+    ).toBeInTheDocument();
+    expect(detectButton()).toBeEnabled();
+  });
+
+  it("names a detected source and offers no button for it", async () => {
+    route({ [LOAD]: stored(otherZone, "DETECTED") });
+
+    render(<Settings />);
+    await waitForForm();
+
+    expect(screen.getByText("Detected from your browser.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /detect automatically/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reverts, submits the browser zone, and shows what the server stored", async () => {
+    route({
+      // First read answers the explicit choice; the re-read after the two
+      // writes answers what detection just stored.
+      [LOAD]: sequence(
+        stored(otherZone, "EXPLICIT"),
+        stored(browserZone, "DETECTED"),
+      ),
+      [RESUME]: stored(otherZone, "DETECTED"),
+      [DETECT]: noContent,
+    });
+
+    render(<Settings />);
+    await waitForForm();
+    fireEvent.click(detectButton());
+
+    expect(
+      await screen.findByText("Detected from your browser."),
+    ).toBeInTheDocument();
+    expect(callsTo(RESUME)).toHaveLength(1);
+    const [, detectInit] = callsTo(DETECT)[0] ?? [];
+    expect(detectInit?.body).toBe(JSON.stringify({ timezone: browserZone }));
+    expect(currentZone()).toBe(browserZone);
+    expect(picker()).toHaveValue(browserZone);
+    expect(screen.getByRole("status")).toHaveTextContent(DETECT_RESUMED);
+    expect(
+      screen.queryByRole("button", { name: /detect automatically/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("spends no detection write when the browser zone is already stored", async () => {
+    route({
+      [LOAD]: stored(browserZone, "EXPLICIT"),
+      [RESUME]: stored(browserZone, "DETECTED"),
+    });
+
+    render(<Settings />);
+    await waitForForm();
+    fireEvent.click(detectButton());
+
+    expect(
+      await screen.findByText("Detected from your browser."),
+    ).toBeInTheDocument();
+    // `DETECT` is deliberately unrouted: a write would reject as a test bug.
+    expect(callsTo(DETECT)).toHaveLength(0);
+    expect(callsTo(LOAD)).toHaveLength(1);
+    expect(currentZone()).toBe(browserZone);
+    expect(screen.getByRole("status")).toHaveTextContent(DETECT_RESUMED);
+  });
+
+  it("keeps the choice and says so when the revert fails", async () => {
+    route({
+      [LOAD]: stored(otherZone, "EXPLICIT"),
+      [RESUME]: json(500, { error: "Internal Server Error" }),
+    });
+
+    render(<Settings />);
+    await waitForForm();
+    fireEvent.click(detectButton());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(DETECT_FAILED);
+    expect(
+      screen.getByText("Chosen by you — detection is off."),
+    ).toBeInTheDocument();
+    expect(detectButton()).toBeEnabled();
+    expect(currentZone()).toBe(otherZone);
+  });
+
+  it("moves focus to the picker once the button it was on is gone", async () => {
+    route({
+      [LOAD]: stored(browserZone, "EXPLICIT"),
+      [RESUME]: stored(browserZone, "DETECTED"),
+    });
+
+    render(<Settings />);
+    await waitForForm();
+    fireEvent.click(detectButton());
+
+    await screen.findByText("Detected from your browser.");
+    // The control that had focus unmounted with the revert; the picker is
+    // where the zone lives now, so that is where focus lands.
+    expect(picker()).toHaveFocus();
+  });
+
+  it("returns focus to the button after a failed revert", async () => {
+    route({
+      [LOAD]: stored(otherZone, "EXPLICIT"),
+      [RESUME]: offline,
+    });
+
+    render(<Settings />);
+    await waitForForm();
+    fireEvent.click(detectButton());
+
+    await screen.findByRole("alert");
+    expect(detectButton()).toHaveFocus();
+  });
+
+  it("clears a stale save message when detection resumes", async () => {
+    route({
+      [LOAD]: stored(browserZone, "DETECTED"),
+      [SAVE]: stored(browserZone, "EXPLICIT"),
+      [RESUME]: stored(browserZone, "DETECTED"),
+    });
+
+    render(<Settings />);
+    await waitForForm();
+    fireEvent.click(saveButton());
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      `Timezone saved: ${browserZone}.`,
+    );
+
+    fireEvent.click(detectButton());
+
+    expect(await screen.findByRole("status")).toHaveTextContent(DETECT_RESUMED);
+    expect(screen.getByRole("status")).not.toHaveTextContent(/timezone saved/i);
+  });
+});

@@ -29,6 +29,19 @@ export function updateSettings(input: UpdateSettingsInput): Promise<Settings> {
 }
 
 /**
+ * `POST /api/settings/resume-detection` — hands the zone back to detection:
+ * the stored source returns to `DETECTED`, the zone stays as it was. The
+ * caller follows up with the browser's zone via `submitDetectedTimezone`,
+ * which the restored source now lets through. Responds with the stored
+ * settings, same reasoning as `updateSettings`.
+ */
+export function resumeDetection(): Promise<Settings> {
+  return apiFetch<Settings>("/settings/resume-detection", {
+    method: "POST",
+  });
+}
+
+/**
  * `PATCH /api/settings/detected` — the browser's zone, offered rather than
  * chosen. The server stores it only while the stored source is still
  * `DETECTED` and leaves it `DETECTED`, so this is safe to call on every

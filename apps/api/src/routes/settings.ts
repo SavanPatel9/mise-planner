@@ -19,6 +19,7 @@ import { validate } from "../middleware/validate.js";
 import {
   applyDetectedTimezone,
   getSettings,
+  resumeDetection,
   updateSettings,
 } from "../services/settings.js";
 import {
@@ -50,6 +51,17 @@ settingsRouter.patch("/", validateUpdate, async (req, res) => {
   // The stored settings come back rather than a 204: the write is what decides
   // `timezoneSource`, so the response is the client's only way to see it turn
   // explicit without a second round trip.
+  res.json(settings);
+});
+
+// The way back from an explicit choice: the source returns to `DETECTED` and
+// detection may fill the zone again. Bodyless — the write is the whole
+// request, so there is nothing to validate — and POST rather than PATCH
+// because no field is named. The stored settings come back for the same
+// reason the explicit write returns them: the source is the thing that moved.
+settingsRouter.post("/resume-detection", async (req, res) => {
+  const settings = await resumeDetection(userIdOf(req));
+
   res.json(settings);
 });
 

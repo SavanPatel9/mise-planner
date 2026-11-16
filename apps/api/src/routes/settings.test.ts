@@ -94,7 +94,9 @@ interface FindArgs {
 
 interface UpdateArgs {
   where: { id: string };
-  data: { timezone: string; timezoneSource: TimezoneSource };
+  // The explicit write sends both fields; the resume-detection write sends
+  // only the source. The double writes what the statement names, nothing more.
+  data: { timezone?: string; timezoneSource: TimezoneSource };
   select: Select;
 }
 
@@ -150,7 +152,9 @@ function updateDouble(args: UpdateArgs): Promise<Settings> {
     return Promise.reject(new Error("record to update not found"));
   }
 
-  row.timezone = args.data.timezone;
+  if (args.data.timezone !== undefined) {
+    row.timezone = args.data.timezone;
+  }
   row.timezoneSource = args.data.timezoneSource;
 
   return Promise.resolve(settingsOf(row));
@@ -874,6 +878,137 @@ describe("the settings router", () => {
       expect(response.status).toBe(400);
       expect(response.body.error).toBe("Validation failed");
       expect(db.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("resuming detection", () => {
+    /** The session user after an explicit choice — the state the way back is for. */
+    function armExplicitUser(): void {
+      users = [
+        {
+          ...SESSION_USER,
+          timezone: "America/Chicago",
+          timezoneSource: "EXPLICIT",
+        },
+      ];
+    }
+
+    it("refuses an unauthenticated POST before any statement", async () => {
+      const response = await request(buildApp()).post(
+        "/api/settings/resume-detection",
+      );
+
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({ error: "Unauthorized" });
+      expect(db.findUnique).not.toHaveBeenCalled();
+      expectNoSettingsStatement();
+    });
+
+    it("turns an explicit source back to DETECTED and keeps the zone", async () => {
+      armExplicitUser();
+      const { app, cookie } = await signedInApp();
+
+      const response = await request(app)
+        .post("/api/settings/resume-detection")
+        .set("Cookie", cookie);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        timezone: "America/Chicago",
+        timezoneSource: "DETECTED",
+      });
+      // The statement names only the source: the zone is not part of this
+      // write at all, which is what "keeps the zone" rests on.
+      expect(db.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: { timezoneSource: "DETECTED" },
+        select: expect.anything(),
+      });
+      expect(Object.keys(writes[0]?.where ?? {})).toEqual(["id"]);
+      expect(Object.keys(writes[0]?.data ?? {})).toEqual(["timezoneSource"]);
+    });
+
+    it("reopens the detection path it hands the zone back to", async () => {
+      armExplicitUser();
+      const { app, cookie } = await signedInApp();
+
+      // Detection is shut while the source is EXPLICIT…
+      await request(app)
+        .patch("/api/settings/detected")
+        .set("Cookie", cookie)
+        .send({ timezone: "Asia/Tokyo" });
+      expect(rowOf(USER_ID)?.timezone).toBe("America/Chicago");
+
+      // …and open again after the way back, with the source still DETECTED.
+      await request(app)
+        .post("/api/settings/resume-detection")
+        .set("Cookie", cookie);
+      await request(app)
+        .patch("/api/settings/detected")
+        .set("Cookie", cookie)
+        .send({ timezone: "Asia/Tokyo" });
+
+      const after = await request(app)
+        .get("/api/settings")
+        .set("Cookie", cookie);
+      expect(after.body).toEqual({
+        timezone: "Asia/Tokyo",
+        timezoneSource: "DETECTED",
+      });
+    });
+
+    it("is a no-op shaped 200 for a source that is already DETECTED", async () => {
+      const { app, cookie } = await signedInApp();
+
+      const response = await request(app)
+        .post("/api/settings/resume-detection")
+        .set("Cookie", cookie);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        timezone: "UTC",
+        timezoneSource: "DETECTED",
+      });
+    });
+
+    it("writes only the session user's row", async () => {
+      armExplicitUser();
+      users.push({
+        id: OTHER_USER_ID,
+        email: "someone@example.com",
+        name: "Someone Else",
+        timezone: "Asia/Tokyo",
+        timezoneSource: "EXPLICIT",
+      });
+      const { app, cookie } = await signedInApp();
+
+      await request(app)
+        .post("/api/settings/resume-detection")
+        .set("Cookie", cookie);
+
+      expect(writes).toHaveLength(1);
+      expect(writes[0]?.where).toEqual({ id: USER_ID });
+      const other = rowOf(OTHER_USER_ID);
+      expect(other?.timezoneSource).toBe("EXPLICIT");
+      expect(other?.timezone).toBe("Asia/Tokyo");
+    });
+
+    it("answers 500 without naming the user when the row is gone", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      armExplicitUser();
+      const { app, cookie } = await signedInApp();
+      // Row gone between `deserializeUser` and the write — Prisma's P2025.
+      db.update.mockRejectedValue(new Error("record to update not found"));
+
+      const response = await request(app)
+        .post("/api/settings/resume-detection")
+        .set("Cookie", cookie);
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: "Internal Server Error" });
+      const logged = errorSpy.mock.calls.flat().join(" ");
+      expect(logged).not.toContain(USER_ID);
+      expect(logged).not.toContain(SESSION_USER.email);
     });
   });
 

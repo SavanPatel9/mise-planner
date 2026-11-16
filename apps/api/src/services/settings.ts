@@ -54,9 +54,18 @@ interface FindSettingsArgs {
   select: SettingsSelect;
 }
 
+/**
+ * The two unconditional writes, one `data` shape each: the explicit save names
+ * both fields, the way back (`resumeDetection`) names only the source — the
+ * zone is left where it was, and the next detection write is what moves it. A
+ * union of whole-args interfaces would be truer still, but Prisma's generic
+ * `update` signature does not accept one; the union lives on `data` instead.
+ */
 interface UpdateSettingsArgs {
   where: { id: string };
-  data: { timezone: string; timezoneSource: typeof EXPLICIT };
+  data:
+    | { timezone: string; timezoneSource: typeof EXPLICIT }
+    | { timezoneSource: typeof DETECTED };
   select: SettingsSelect;
 }
 
@@ -158,6 +167,26 @@ export async function updateSettings(
  * did not already send. Idempotent: re-running it with the same zone is a write
  * of the value already there.
  */
+/**
+ * Hands the zone back to detection: the source returns to `DETECTED`, the zone
+ * stays as stored. Unconditional on purpose — resuming detection that was
+ * never stopped is a write of the value already there, and the response tells
+ * the client the source either way. Like `updateSettings`, a row that has
+ * vanished mid-request throws (`P2025`) and surfaces as a 500.
+ */
+export async function resumeDetection(
+  userId: string,
+  client: SettingsClient = prisma,
+): Promise<Settings> {
+  const row = await client.user.update({
+    where: { id: userId },
+    data: { timezoneSource: DETECTED },
+    select: SETTINGS_SELECT,
+  });
+
+  return toSettingsDto(row);
+}
+
 export async function applyDetectedTimezone(
   userId: string,
   input: DetectTimezoneInput,

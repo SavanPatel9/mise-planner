@@ -511,6 +511,10 @@ accountEmail)`; it returns scopes as full-URL `string[]` for membership
     anything ICU resolves (offset forms like `+05:00`, legacy aliases), stored
     uncanonicalized — known gap, day boundaries still correct. Navigation is an
     AppShell header toggle (no router — routing arrives with M3-T4 if wanted).
+    Follow-up (quick path, 2026-11-16): `POST /api/settings/resume-detection`
+    turns an explicit choice back to `DETECTED` (zone kept; the settings screen
+    names the source and offers "Detect automatically", which reverts and then
+    immediately submits the browser zone through the detection path).
   - handoffs: rollover now reads `User.timezone` inside its transaction, one
     extra statement per authenticated request; a pre-read that skips the
     transaction when `lastRolloverOn` is already today would remove it — do
