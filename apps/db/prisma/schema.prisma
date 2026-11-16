@@ -16,17 +16,29 @@ datasource db {
 }
 
 model User {
-  id             String        @id @default(cuid())
-  email          String        @unique
+  id             String         @id @default(cuid())
+  email          String         @unique
   name           String?
+  // IANA zone the "day" is measured in — the rollover boundary. UTC until
+  // something sets it; `timezoneSource` says who did.
+  timezone       String         @default("UTC")
+  timezoneSource TimezoneSource @default(DETECTED)
   // Local calendar day the lazy rollover last ran for; null until the first one
-  lastRolloverOn DateTime?     @db.Date
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  lastRolloverOn DateTime?      @db.Date
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
   tasks          Task[]
   sessions       Session[]
   integrations   Integration[]
   // dailyPlans   DailyPlan[] // restored in M6-T1
+}
+
+// How `User.timezone` got its value. Browser detection may fill a `DETECTED`
+// zone on every sign-in; an `EXPLICIT` one was chosen in settings and detection
+// must never overwrite it — travelling must not silently move the day boundary.
+enum TimezoneSource {
+  DETECTED
+  EXPLICIT
 }
 
 model Task {

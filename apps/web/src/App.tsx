@@ -1,10 +1,12 @@
 import type { MeResponse } from "@mise/shared";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { AuthProvider } from "./auth/AuthProvider";
 import { useAuth } from "./auth/authContext";
 import { stripAuthErrorParam } from "./auth/authError";
+import { Settings } from "./pages/Settings";
 import { SignIn } from "./pages/SignIn";
+import { useDetectedTimezone } from "./settings/useDetectedTimezone";
 
 export function App() {
   return (
@@ -41,6 +43,14 @@ function AuthGate() {
   return <AppShell user={state.user} onSignOut={signOut} />;
 }
 
+/** Which screen the shell is showing. No router: there are two of them. */
+type View = "today" | "settings";
+
+const VIEW_LABELS: Record<View, string> = {
+  today: "Today",
+  settings: "Settings",
+};
+
 function AppShell({
   user,
   onSignOut,
@@ -50,6 +60,26 @@ function AppShell({
 }) {
   const [signOutFailed, setSignOutFailed] = useState(false);
   const [signOutPending, setSignOutPending] = useState(false);
+  const [view, setView] = useState<View>("today");
+  const mainRef = useRef<HTMLElement>(null);
+  const shownView = useRef<View | null>(null);
+
+  // Runs here rather than in `AuthProvider`: it is signed-in work, and the
+  // provider also renders the sign-in screen.
+  useDetectedTimezone();
+
+  useEffect(() => {
+    // Focus follows the view so the change is perceivable without sight — the
+    // landmark's name is read on arrival. Skipped unless the view actually
+    // changed, which also keeps StrictMode's second mount pass from pulling
+    // focus out of the page on load.
+    const previous = shownView.current;
+    shownView.current = view;
+
+    if (previous !== null && previous !== view) {
+      mainRef.current?.focus();
+    }
+  }, [view]);
 
   useEffect(() => {
     // A forced callback can land a signed-in user here with `?authError=`
@@ -86,14 +116,27 @@ function AppShell({
             {user.email}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleSignOut}
-          disabled={signOutPending}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
-        >
-          Sign out
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setView((current) =>
+                current === "settings" ? "today" : "settings",
+              );
+            }}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+          >
+            {view === "settings" ? "Back to today" : "Settings"}
+          </button>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signOutPending}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
       {/* Rendered unconditionally so the live region exists before it has
@@ -107,10 +150,25 @@ function AppShell({
         ) : null}
       </div>
 
-      <main className="px-6 py-10">
-        <p className="text-sm text-slate-600">
-          Your day&rsquo;s plan will appear here.
-        </p>
+      {/* Named after the current view and focusable so switching screens can
+          move focus here; the outline is left to the browser rather than
+          suppressed, which keeps the landing point visible. */}
+      <main
+        ref={mainRef}
+        tabIndex={-1}
+        aria-label={VIEW_LABELS[view]}
+        className="px-6 py-10"
+      >
+        {view === "settings" ? (
+          <Settings />
+        ) : (
+          <>
+            <h2 className="text-lg font-semibold text-slate-900">Today</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Your day&rsquo;s plan will appear here.
+            </p>
+          </>
+        )}
       </main>
     </div>
   );

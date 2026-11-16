@@ -4,8 +4,8 @@
 // is what "lazy" means here, and is also why a day the app was never opened
 // leaves no trace. A week away costs one increment, not seven.
 //
-// Every statement carries the user: the claim is keyed by `id`, the task update
-// by `userId`, same rule as `services/tasks.ts`.
+// Every statement carries the user: the zone read and the claim are keyed by
+// `id`, the task update by `userId`, same rule as `services/tasks.ts`.
 import { prisma } from "@mise/db";
 import type { TaskStatus } from "@mise/shared";
 
@@ -15,41 +15,57 @@ import type { TaskStatus } from "@mise/shared";
  */
 const UNFINISHED_STATUSES = ["TODO", "IN_PROGRESS"] satisfies TaskStatus[];
 
-/** Zone the "day" is measured in when `USER_TZ` says nothing. */
+/** Zone the "day" is measured in when the stored one is unusable. */
 const DEFAULT_TIME_ZONE = "UTC";
 
 /**
- * The zone that decides when a day turns over, validated once at module load:
- * a typo in `USER_TZ` must stop the process at startup rather than throw a
- * `RangeError` out of the middleware on every request. The var is named without
- * its value, as in `env.ts`.
+ * The local calendar day of `now` in `timeZone`, as the UTC midnight that
+ * stands for it. A `@db.Date` column has no time and no zone, and Prisma reads
+ * and writes it as the UTC midnight of that date — so "today" has to be built
+ * that way to compare against the stored value.
+ *
+ * An unusable stored zone falls back to UTC rather than throwing: the column is
+ * validated on the way in (`routes/settings.schema.ts`), so a value ICU rejects
+ * here means the zone database moved under a row that was valid when written —
+ * which must cost the user a day measured in the wrong zone, not every
+ * authenticated request. The log follows the same rule: once per process, since
+ * the condition persists until the column is rewritten and a line per request
+ * would only bury it. The line names the column, never its value.
  */
-const dayFormat = createDayFormat();
+function localDay(now: Date, timeZone: string): Date {
+  return new Date(`${formatDay(now, timeZone)}T00:00:00.000Z`);
+}
 
-function createDayFormat(): Intl.DateTimeFormat {
-  const timeZone = process.env.USER_TZ?.trim() ?? "";
+let warnedUnusableZone = false;
 
+function formatDay(now: Date, timeZone: string): string {
   try {
-    // en-CA formats as YYYY-MM-DD, which is the shape `localDay` parses.
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: timeZone === "" ? DEFAULT_TIME_ZONE : timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
+    return dayFormat(timeZone).format(now);
   } catch {
-    throw new Error("Invalid IANA time zone in env var: USER_TZ");
+    if (!warnedUnusableZone) {
+      warnedUnusableZone = true;
+      console.error(
+        "[api] rollover: unusable User.timezone, measuring the day in UTC",
+      );
+    }
+
+    return dayFormat(DEFAULT_TIME_ZONE).format(now);
   }
 }
 
-/**
- * The local calendar day of `now`, as the UTC midnight that stands for it. A
- * `@db.Date` column has no time and no zone, and Prisma reads and writes it as
- * the UTC midnight of that date — so "today" has to be built that way to
- * compare against the stored value.
- */
-function localDay(now: Date): Date {
-  return new Date(`${dayFormat.format(now)}T00:00:00.000Z`);
+function dayFormat(timeZone: string): Intl.DateTimeFormat {
+  // en-CA formats as YYYY-MM-DD, which is the shape `localDay` parses.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+interface FindTimeZoneArgs {
+  where: { id: string };
+  select: { timezone: true };
 }
 
 interface ClaimDayArgs {
@@ -66,12 +82,15 @@ interface DeferTasksArgs {
 }
 
 /**
- * The two statements the rollover issues, both inside its transaction. Narrowed
- * as in `services/tasks.ts` so a test can inject a double — an interactive
- * transaction double is just `$transaction: (run) => run(txDouble)`.
+ * The three statements the rollover issues, all inside its transaction.
+ * Narrowed as in `services/tasks.ts` so a test can inject a double — an
+ * interactive transaction double is just `$transaction: (run) => run(txDouble)`.
  */
 export interface RolloverTransactionClient {
   user: {
+    findUnique: (
+      args: FindTimeZoneArgs,
+    ) => Promise<{ timezone: string } | null>;
     updateMany: (args: ClaimDayArgs) => Promise<{ count: number }>;
   };
   task: {
@@ -87,6 +106,11 @@ export interface RolloverClient {
 
 /**
  * Rolls this user's unfinished tasks into the current local day, once.
+ *
+ * "Local" is the user's own `timezone` column, read inside the same transaction
+ * as the claim so the day the claim writes is the day that zone was measured
+ * in. A user row that is gone claims nothing: there is no zone to measure a day
+ * in, and the session it came from is about to be useless anyway.
  *
  * The write order is the point. `updateMany` on the user row is the claim: its
  * `where` only matches while `lastRolloverOn` is still behind today, so under
@@ -105,9 +129,17 @@ export async function rolloverIfNeeded(
   now: Date,
   client: RolloverClient = prisma,
 ): Promise<void> {
-  const today = localDay(now);
-
   await client.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    if (user === null) {
+      return;
+    }
+
+    const today = localDay(now, user.timezone);
+
     const { count } = await tx.user.updateMany({
       where: {
         id: userId,

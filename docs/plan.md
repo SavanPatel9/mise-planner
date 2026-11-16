@@ -484,8 +484,8 @@ accountEmail)`; it returns scopes as full-URL `string[]` for membership
     `table.sql`) and `session.ts` sets `createTableIfMissing: false` — the
     runtime role no longer needs `CREATE`. `prisma`/`@prisma/client` are pinned
     exactly (the external-table guard rides an experimental config flag).
-    Local day comes from optional `USER_TZ` (IANA, default UTC) — set it in
-    Vercel env before deploying or days roll at UTC midnight.
+    Local day comes from the user's `User.timezone` column (default UTC) —
+    M3-T5 superseded the `USER_TZ` env var this task originally read.
   - accept:
     - Adds `User.lastRolloverOn DateTime? @db.Date` via a Prisma migration (no hand edits, no `db push`).
     - On the first authenticated request of a new local day, unfinished (`TODO`/`IN_PROGRESS`) tasks increment `deferCount` once and `lastRolloverOn` advances; a second request the same day is a no-op.
@@ -499,6 +499,44 @@ accountEmail)`; it returns scopes as full-URL `string[]` for membership
     - `deferCount > 0` is visible on the row; estimate and project are shown when present.
 
 ---
+
+- [x] **M3-T5 — Per-user timezone: detection + settings control** — done 2026-11-15 (on branch `m3-t3` atop M3-T3, awaiting human review + merge)
+  - depends-on: M3-T3
+  - note: detection writes go to their own `PATCH /api/settings/detected` (204) —
+    a conditional `updateMany` that only applies while `timezoneSource` is still
+    `DETECTED` and leaves it `DETECTED`, so a travelling user keeps auto-updating
+    until they explicitly choose in settings (`PATCH /api/settings`, which sets
+    `EXPLICIT`). Mid-day zone change: moving west skips one boundary, moving
+    east can add one extra increment — once, by design. The zone refine accepts
+    anything ICU resolves (offset forms like `+05:00`, legacy aliases), stored
+    uncanonicalized — known gap, day boundaries still correct. Navigation is an
+    AppShell header toggle (no router — routing arrives with M3-T4 if wanted).
+  - handoffs: rollover now reads `User.timezone` inside its transaction, one
+    extra statement per authenticated request; a pre-read that skips the
+    transaction when `lastRolloverOn` is already today would remove it — do
+    only if request latency ever matters. Web keyboard-activation tests need
+    `@testing-library/user-event` as a devDependency if wanted.
+  - files: `apps/db/prisma/schema.prisma`, `apps/db/prisma/migrations/`, `packages/shared/`, `apps/api/src/services/rollover.ts`, `apps/api/src/routes/settings.ts` (new), `apps/web/src/pages/Settings.tsx` (new), `apps/web/src/api/settings.ts` (new)
+  - note: supersedes `USER_TZ` from M3-T3 — retire the env var (remove from
+    `.env.example` and the boot-time validation; nothing to unset in Vercel if
+    it was never added). Detection fills `User.timezone` only while the user
+    has not explicitly chosen one; once set in settings, detection never
+    overwrites it (travel must not silently move the rollover boundary).
+  - accept:
+    - `User.timezone String @default("UTC")` plus a `timezoneSource`
+      (detected vs explicit) or equivalent flag, added via Prisma migration.
+    - `rolloverIfNeeded` reads the user's stored timezone (no env lookup);
+      the atomic claim-then-increment semantics and tests from M3-T3 hold.
+    - Settings endpoint (PATCH) validates the IANA name server-side via
+      `Intl.DateTimeFormat` and rejects invalid zones with a 400; every query
+      scoped by `userId`.
+    - Web detects the browser zone via
+      `Intl.DateTimeFormat().resolvedOptions().timeZone` after sign-in and
+      submits it only when the stored choice is not explicit; a minimal
+      settings screen shows the current zone and lets the user change it.
+    - Tests cover: rollover using a per-user zone (boundary case per user),
+      detected-never-overwrites-explicit, invalid zone rejected, settings
+      round-trip.
 
 ## M4 — Multi-task Pomodoro
 

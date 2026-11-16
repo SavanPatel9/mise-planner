@@ -15,6 +15,7 @@ const USER = { id: "user-cuid-m2t7", email: "chef@example.com", name: "Chef" };
 
 const ME = "/api/me";
 const LOGOUT = "/api/auth/logout";
+const SETTINGS = "/api/settings";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -24,7 +25,7 @@ type Routes = Record<string, () => Promise<Response>>;
 function route(routes: Routes): void {
   fetchMock.mockImplementation((input) => {
     const path = new URL(String(input), window.location.origin).pathname;
-    const handler = routes[path];
+    const handler = routes[path] ?? DEFAULT_ROUTES[path];
     if (handler === undefined) {
       return Promise.reject(new Error(`unrouted fetch: ${path}`));
     }
@@ -46,6 +47,16 @@ function json(status: number, body: unknown): () => Promise<Response> {
 const ok = (body: unknown) => json(200, body);
 const noContent = () => Promise.resolve(new Response(null, { status: 204 }));
 const unauthorized = json(401, { error: "Unauthorized" });
+
+/**
+ * Routed for every test unless it says otherwise: the signed-in shell reads
+ * settings on mount to fill in a detected timezone, which is not what the
+ * tests here are about. `EXPLICIT` is the quiet answer — detection leaves an
+ * explicit choice alone, so no `PATCH` follows.
+ */
+const DEFAULT_ROUTES: Routes = {
+  [SETTINGS]: ok({ timezone: "UTC", timezoneSource: "EXPLICIT" }),
+};
 
 /** A request that never reaches the server: what `fetch` itself rejects with. */
 const offline = (): Promise<Response> =>
@@ -85,6 +96,10 @@ const expectSearch = (search: string) =>
 /** Every `POST /api/auth/logout` this test issued, in order. */
 const logoutCalls = () =>
   fetchMock.mock.calls.filter(([input]) => String(input) === LOGOUT);
+
+/** Every request this test issued to `path`, in order. */
+const callsTo = (path: string) =>
+  fetchMock.mock.calls.filter(([input]) => String(input) === path);
 
 /**
  * The shell is still mounted with the session's user on it and sign-in is
@@ -427,6 +442,166 @@ describe("App sign-out", () => {
 
     expect(await signInLink()).toBeInTheDocument();
     expect(screen.queryByText(SIGN_OUT_FAILED)).not.toBeInTheDocument();
+  });
+});
+
+describe("App shell navigation", () => {
+  const DETECTED = "/api/settings/detected";
+
+  const settingsToggle = () => screen.getByRole("button", { name: "Settings" });
+  const backToToday = () =>
+    screen.getByRole("button", { name: /back to today/i });
+  const main = () => screen.getByRole("main");
+
+  /** Signs in and waits for the shell, which is where the toggle lives. */
+  async function renderShell(): Promise<void> {
+    render(<App />);
+    expect(
+      await screen.findByText("Chef · chef@example.com"),
+    ).toBeInTheDocument();
+  }
+
+  it("reaches settings from the header and comes back", async () => {
+    route({ [ME]: ok(USER) });
+    await renderShell();
+
+    expect(main()).toHaveAccessibleName("Today");
+    fireEvent.click(settingsToggle());
+
+    // The landmark is renamed, not just its contents swapped: that name is
+    // what gets read out on arrival.
+    expect(main()).toHaveAccessibleName("Settings");
+    expect(
+      await screen.findByRole("heading", { name: "Settings", level: 2 }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Today" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(backToToday());
+
+    expect(main()).toHaveAccessibleName("Today");
+    expect(
+      screen.getByRole("heading", { name: "Today", level: 2 }),
+    ).toBeInTheDocument();
+    // The one toggle has to offer the way back out again, or settings is a
+    // dead end until the page is reloaded.
+    expect(settingsToggle()).toBeInTheDocument();
+  });
+
+  it("moves focus to the main landmark on every view change", async () => {
+    route({ [ME]: ok(USER) });
+    await renderShell();
+
+    fireEvent.click(settingsToggle());
+    expect(main()).toHaveFocus();
+
+    fireEvent.click(backToToday());
+    expect(main()).toHaveFocus();
+  });
+
+  it("leaves focus alone on arrival, including StrictMode's second pass", async () => {
+    route({ [ME]: ok(USER) });
+
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+    expect(
+      await screen.findByText("Chef · chef@example.com"),
+    ).toBeInTheDocument();
+
+    // Nothing changed view here, so nothing may yank focus off whatever the
+    // user was on — least of all the double mount.
+    expect(document.body).toHaveFocus();
+    expect(screen.getByRole("main")).not.toHaveFocus();
+  });
+
+  it("offers the toggle as a focusable native button, so Enter and Space work", async () => {
+    route({ [ME]: ok(USER) });
+    await renderShell();
+    const toggle = settingsToggle();
+
+    // Keyboard activation itself is the browser's, and `jsdom` does not
+    // synthesise it: what this can check is that the control is a real,
+    // reachable, non-submitting button rather than a clickable `div`.
+    expect(toggle.tagName).toBe("BUTTON");
+    expect(toggle).toHaveAttribute("type", "button");
+    expect(toggle).toBeEnabled();
+    expect(toggle).not.toHaveAttribute("tabindex");
+
+    toggle.focus();
+    expect(toggle).toHaveFocus();
+  });
+
+  it("keeps sign-out reachable from the settings view", async () => {
+    route({ [ME]: ok(USER), [LOGOUT]: noContent });
+    await renderShell();
+    fireEvent.click(settingsToggle());
+
+    fireEvent.click(signOutButton());
+
+    expect(await signInLink()).toBeInTheDocument();
+  });
+
+  it("shows the settings load failure in place, with the shell intact", async () => {
+    route({ [ME]: ok(USER), [SETTINGS]: offline });
+    await renderShell();
+
+    // Detection failing first must not stop the screen from loading, nor
+    // leave its own notice behind on the way in.
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    fireEvent.click(settingsToggle());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /couldn't load your settings/i,
+    );
+    expectStillSignedIn();
+  });
+
+  it("fills in the detected zone once, for a signed-in user only", async () => {
+    const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const storedZone = browserZone === "UTC" ? "Europe/Paris" : "UTC";
+    route({
+      [ME]: ok(USER),
+      [SETTINGS]: ok({ timezone: storedZone, timezoneSource: "DETECTED" }),
+      [DETECTED]: noContent,
+    });
+
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+    expect(
+      await screen.findByText("Chef · chef@example.com"),
+    ).toBeInTheDocument();
+
+    // Pins that the hook is mounted in the signed-in subtree at all, and that
+    // the shell's own double mount cannot double the write.
+    await waitFor(() => {
+      expect(callsTo(DETECTED)).toHaveLength(1);
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      DETECTED,
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ timezone: browserZone }),
+      }),
+    );
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("reads no settings at all for a signed-out visitor", async () => {
+    route({ [ME]: unauthorized });
+
+    render(<App />);
+    expect(await signInLink()).toBeInTheDocument();
+
+    // Settings is signed-in work: a visitor's detection request would only
+    // ever come back 401.
+    expect(callsTo(SETTINGS)).toHaveLength(0);
   });
 });
 

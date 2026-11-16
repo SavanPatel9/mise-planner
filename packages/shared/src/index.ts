@@ -3,6 +3,12 @@
 // here would have to exist in `dist/` to survive the import.
 export type { AuthErrorFlag, MeResponse } from "./auth.js";
 export type {
+  DetectTimezoneInput,
+  Settings,
+  TimezoneSource,
+  UpdateSettingsInput,
+} from "./settings.js";
+export type {
   CreateTaskInput,
   Task,
   TaskPriority,

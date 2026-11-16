@@ -153,11 +153,17 @@ describe("createApp", () => {
     db.transaction.mockImplementation(
       (
         run: (tx: {
-          user: { updateMany: (args: unknown) => Promise<{ count: number }> };
+          user: {
+            findUnique: (args: unknown) => Promise<{ timezone: string } | null>;
+            updateMany: (args: unknown) => Promise<{ count: number }>;
+          };
         }) => Promise<unknown>,
       ) =>
         run({
           user: {
+            // The zone the rollover reads before its claim, armed to the column
+            // default so the day it measures is the UTC one.
+            findUnique: () => Promise.resolve({ timezone: "UTC" }),
             updateMany: (args) =>
               db.userUpdateMany(args) as Promise<{ count: number }>,
           },

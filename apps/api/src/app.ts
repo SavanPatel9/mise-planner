@@ -14,6 +14,7 @@ import {
 import { rollover } from "./middleware/rollover.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { healthRouter } from "./routes/health.js";
+import { settingsRouter } from "./routes/settings.js";
 import { tasksRouter } from "./routes/tasks.js";
 
 export interface CreateAppOptions {
@@ -95,6 +96,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use("/api", rollover);
 
   app.use("/api/tasks", tasksRouter);
+  app.use("/api/settings", settingsRouter);
 
   app.use(notFound);
   app.use(errorHandler);

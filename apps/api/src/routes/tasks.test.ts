@@ -157,7 +157,10 @@ const txCalls: TxCall[] = [];
  * plus the rollover's claim on the user row.
  */
 type TxDouble = TaskTransactionClient & {
-  user: { updateMany: (args: unknown) => Promise<{ count: number }> };
+  user: {
+    findUnique: (args: unknown) => Promise<{ timezone: string } | null>;
+    updateMany: (args: unknown) => Promise<{ count: number }>;
+  };
 };
 
 /**
@@ -169,6 +172,10 @@ type TxDouble = TaskTransactionClient & {
 function runInTransaction<T>(run: (tx: TxDouble) => Promise<T>): Promise<T> {
   const tx: TxDouble = {
     user: {
+      // The zone the rollover reads before its claim (`services/rollover.ts`).
+      // Armed to the column default, so the day it measures is the UTC one and
+      // these tests stay indifferent to the machine's zone.
+      findUnique: () => Promise.resolve({ timezone: "UTC" }),
       updateMany: (args) =>
         db.userUpdateMany(args) as Promise<{ count: number }>,
     },
